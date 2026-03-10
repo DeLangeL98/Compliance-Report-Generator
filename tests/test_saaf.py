@@ -1,0 +1,496 @@
+"""
+SAAF — Test Suite (6 tests, no API calls required)
+
+Run with:
+    python -m pytest tests/ -v
+or:
+    python -m unittest tests.test_saaf -v
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+# Ensure project root is on the path
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from saaf.core.agent import ComplianceAgent
+from saaf.core.mapper import FrameworkMapper
+from saaf.core.models import AuditInput, ComplianceReport
+from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
+from saaf.knowledge.regulations import normalise_jurisdiction
+from saaf.prompts.system_prompt import build_system_prompt, build_user_message
+from config import Config
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_input(**kwargs) -> AuditInput:
+    """Build an AuditInput with sensible defaults, overridable via kwargs."""
+    defaults = dict(
+        company_name="Test Corp",
+        industry="Healthcare",
+        country="US",
+        listed_status="Private",
+        audit_topic="Cybersecurity",
+    )
+    defaults.update(kwargs)
+    return AuditInput(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# Test 1 — Jurisdiction normaliser
+# ---------------------------------------------------------------------------
+
+class TestJurisdictionNormaliser(unittest.TestCase):
+    """Verify that country strings resolve to canonical jurisdiction keys."""
+
+    def test_us_variants(self):
+        for country in ["US", "USA", "United States", "united states of america"]:
+            with self.subTest(country=country):
+                self.assertEqual(normalise_jurisdiction(country), "US")
+
+    def test_eu_member_states(self):
+        for country in ["Germany", "DE", "France", "FR", "Ireland", "IE", "NL"]:
+            with self.subTest(country=country):
+                self.assertEqual(normalise_jurisdiction(country), "EU")
+
+    def test_uk(self):
+        for country in ["UK", "GB", "United Kingdom", "England"]:
+            with self.subTest(country=country):
+                self.assertEqual(normalise_jurisdiction(country), "UK")
+
+    def test_australia(self):
+        for country in ["AU", "AUS", "Australia"]:
+            with self.subTest(country=country):
+                self.assertEqual(normalise_jurisdiction(country), "AU")
+
+    def test_singapore(self):
+        self.assertEqual(normalise_jurisdiction("Singapore"), "SG")
+
+    def test_unknown_returns_other(self):
+        self.assertEqual(normalise_jurisdiction("Narnia"), "OTHER")
+        self.assertEqual(normalise_jurisdiction("ZZ"), "OTHER")
+
+
+# ---------------------------------------------------------------------------
+# Test 2 — Framework mapper correctness
+# ---------------------------------------------------------------------------
+
+class TestFrameworkMapper(unittest.TestCase):
+    """
+    Verify the deterministic mapper selects the right frameworks for
+    known input profiles without any API calls.
+    """
+
+    def _map(self, **kwargs):
+        return FrameworkMapper(_make_input(**kwargs)).map()
+
+    # --- US Healthcare Private + Cybersecurity ---
+    def test_us_healthcare_includes_hipaa(self):
+        result = self._map(industry="Healthcare", country="US",
+                           listed_status="Private", audit_topic="Cybersecurity")
+        keys = result.applicable_framework_keys
+        self.assertIn("HIPAA", keys, "HIPAA must be selected for US Healthcare")
+
+    def test_us_healthcare_includes_hitrust(self):
+        result = self._map(industry="Healthcare", country="US",
+                           listed_status="Private", audit_topic="Cybersecurity")
+        self.assertIn("HITRUST_CSF", result.applicable_framework_keys)
+
+    def test_us_healthcare_includes_nist_csf(self):
+        result = self._map(industry="Healthcare", country="US",
+                           listed_status="Private", audit_topic="Cybersecurity")
+        self.assertIn("NIST_CSF", result.applicable_framework_keys)
+
+    # --- EU Financial Services Public + Data Privacy ---
+    def test_eu_finserv_includes_gdpr(self):
+        result = self._map(industry="Financial Services", country="Germany",
+                           listed_status="Public", audit_topic="Data Privacy")
+        self.assertIn("GDPR", result.applicable_framework_keys,
+                      "GDPR must be selected for EU entity")
+
+    def test_eu_finserv_includes_dora(self):
+        result = self._map(industry="Financial Services", country="France",
+                           listed_status="Public", audit_topic="Cybersecurity")
+        self.assertIn("DORA", result.applicable_framework_keys,
+                      "DORA must be selected for EU Financial Services")
+
+    def test_eu_public_includes_csrd(self):
+        result = self._map(industry="Financial Services", country="Germany",
+                           listed_status="Public", audit_topic="ESG & Sustainability")
+        self.assertIn("CSRD_ESRS", result.applicable_framework_keys,
+                      "CSRD must be selected for EU Public companies")
+
+    # --- US Public Financial Services + Financial Reporting ---
+    def test_us_public_finserv_includes_sox(self):
+        result = self._map(industry="Financial Services", country="US",
+                           listed_status="Public", audit_topic="Financial Reporting")
+        self.assertIn("SOX", result.applicable_framework_keys,
+                      "SOX must be selected for US Public companies")
+
+    def test_us_private_excludes_sox(self):
+        result = self._map(industry="Healthcare", country="US",
+                           listed_status="Private", audit_topic="Financial Reporting")
+        self.assertNotIn("SOX", result.applicable_framework_keys,
+                         "SOX must NOT apply to Private companies")
+
+    # --- US Energy + Cybersecurity ---
+    def test_us_energy_includes_nerc_cip(self):
+        result = self._map(industry="Energy", country="US",
+                           listed_status="Private", audit_topic="Cybersecurity")
+        self.assertIn("NERC_CIP", result.applicable_framework_keys)
+
+    # --- Framework match objects have required fields ---
+    def test_framework_matches_have_rationale(self):
+        result = self._map(industry="Technology", country="US",
+                           listed_status="Private", audit_topic="IT General Controls")
+        for match in result.framework_matches:
+            self.assertTrue(match.rationale, f"{match.key} has empty rationale")
+            self.assertTrue(match.full_name, f"{match.key} has empty full_name")
+
+    def test_resolved_jurisdiction_set(self):
+        result = self._map(country="Singapore")
+        self.assertEqual(result.resolved_jurisdiction, "SG")
+
+
+# ---------------------------------------------------------------------------
+# Test 3 — Pydantic model validation
+# ---------------------------------------------------------------------------
+
+class TestPydanticModels(unittest.TestCase):
+    """Verify input and output schemas accept valid data and reject invalid data."""
+
+    def test_valid_audit_input(self):
+        ai = _make_input()
+        self.assertEqual(ai.company_name, "Test Corp")
+        self.assertEqual(ai.industry, "Healthcare")
+
+    def test_invalid_industry_rejected(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            AuditInput(
+                company_name="X",
+                industry="Intergalactic Mining",   # not in Literal
+                country="US",
+                listed_status="Private",
+                audit_topic="Cybersecurity",
+            )
+
+    def test_invalid_listed_status_rejected(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            AuditInput(
+                company_name="X",
+                industry="Healthcare",
+                country="US",
+                listed_status="Sovereign",          # not in Literal
+                audit_topic="Cybersecurity",
+            )
+
+    def test_compliance_report_defaults(self):
+        """ComplianceReport auto-populates report_id, generated_at, and disclaimer."""
+        ai = _make_input()
+        report = ComplianceReport(
+            audit_input=ai,
+            mandatory_regulations=[],
+            framework_assessments=[],
+            gap_risk_summary={
+                "overall_risk_rating": "High",
+                "critical_gaps": [],
+                "recommended_priority_actions": [],
+                "estimated_remediation_effort": "Medium",
+                "executive_summary": "Test summary.",
+            },
+        )
+        self.assertTrue(report.report_id)
+        self.assertTrue(report.generated_at)
+        self.assertTrue(report.disclaimer)
+
+    def test_compliance_report_json_roundtrip(self):
+        """A ComplianceReport survives a JSON serialise → deserialise cycle."""
+        ai = _make_input()
+        report = ComplianceReport(
+            audit_input=ai,
+            mandatory_regulations=[],
+            framework_assessments=[],
+            gap_risk_summary={
+                "overall_risk_rating": "Low",
+                "critical_gaps": ["Gap A"],
+                "recommended_priority_actions": ["Action 1"],
+                "estimated_remediation_effort": "Low",
+                "executive_summary": "All good.",
+            },
+        )
+        json_str = report.model_dump_json()
+        restored = ComplianceReport.model_validate_json(json_str)
+        self.assertEqual(report.report_id, restored.report_id)
+        self.assertEqual(restored.gap_risk_summary.critical_gaps, ["Gap A"])
+
+
+# ---------------------------------------------------------------------------
+# Test 4 — Framework registry integrity
+# ---------------------------------------------------------------------------
+
+class TestFrameworkRegistry(unittest.TestCase):
+    """Verify the registry data is well-formed and internally consistent."""
+
+    REQUIRED_KEYS = {"full_name", "domains", "audit_topics", "industries", "listed_status"}
+
+    def test_all_entries_have_required_keys(self):
+        for fw_key, fw in FRAMEWORK_REGISTRY.items():
+            with self.subTest(framework=fw_key):
+                for k in self.REQUIRED_KEYS:
+                    self.assertIn(k, fw, f"'{fw_key}' missing field '{k}'")
+
+    def test_domains_are_non_empty_lists(self):
+        for fw_key, fw in FRAMEWORK_REGISTRY.items():
+            with self.subTest(framework=fw_key):
+                self.assertIsInstance(fw["domains"], list)
+                self.assertGreater(len(fw["domains"]), 0,
+                                   f"'{fw_key}' has empty domains list")
+
+    def test_full_names_are_non_empty_strings(self):
+        for fw_key, fw in FRAMEWORK_REGISTRY.items():
+            with self.subTest(framework=fw_key):
+                self.assertIsInstance(fw["full_name"], str)
+                self.assertTrue(fw["full_name"].strip(),
+                                f"'{fw_key}' has blank full_name")
+
+    def test_at_least_20_frameworks_registered(self):
+        self.assertGreaterEqual(len(FRAMEWORK_REGISTRY), 20,
+                                "Expected at least 20 frameworks in registry")
+
+    def test_audit_topics_values_are_valid(self):
+        from saaf.core.models import AuditTopic
+        from typing import get_args
+        valid_topics = set(get_args(AuditTopic)) | {"*"}
+        for fw_key, fw in FRAMEWORK_REGISTRY.items():
+            for topic in fw.get("audit_topics", []):
+                with self.subTest(framework=fw_key, topic=topic):
+                    self.assertIn(topic, valid_topics,
+                                  f"'{fw_key}' has unknown audit_topic '{topic}'")
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — System prompt builder
+# ---------------------------------------------------------------------------
+
+class TestSystemPromptBuilder(unittest.TestCase):
+    """Verify the dynamic prompt builder produces a coherent, non-empty prompt."""
+
+    def setUp(self):
+        self.audit_input = _make_input(
+            industry="Financial Services",
+            country="US",
+            listed_status="Public",
+            audit_topic="Financial Reporting",
+        )
+        self.mapping = FrameworkMapper(self.audit_input).map()
+
+    def test_system_prompt_is_non_empty(self):
+        prompt = build_system_prompt(self.audit_input, self.mapping)
+        self.assertTrue(prompt.strip())
+
+    def test_system_prompt_contains_role_instruction(self):
+        prompt = build_system_prompt(self.audit_input, self.mapping)
+        self.assertIn("Senior Internal Audit", prompt)
+
+    def test_system_prompt_injects_framework_names(self):
+        prompt = build_system_prompt(self.audit_input, self.mapping)
+        # At least one framework's full name should appear in the prompt
+        found_any = any(
+            m.full_name in prompt for m in self.mapping.framework_matches
+        )
+        self.assertTrue(found_any, "No framework full_names found in system prompt")
+
+    def test_system_prompt_contains_json_schema(self):
+        prompt = build_system_prompt(self.audit_input, self.mapping)
+        self.assertIn("ComplianceReport", prompt)
+        self.assertIn("gap_risk_summary", prompt)
+
+    def test_user_message_contains_company_name(self):
+        msg = build_user_message(self.audit_input, self.mapping)
+        self.assertIn(self.audit_input.company_name, msg)
+
+    def test_user_message_contains_audit_topic(self):
+        msg = build_user_message(self.audit_input, self.mapping)
+        self.assertIn(self.audit_input.audit_topic, msg)
+
+    def test_user_message_lists_frameworks(self):
+        msg = build_user_message(self.audit_input, self.mapping)
+        self.assertIn("FRAMEWORKS IN SCOPE", msg)
+
+
+# ---------------------------------------------------------------------------
+# Test 6 (new) — JSON extraction robustness (regression for invalid-JSON bug)
+# ---------------------------------------------------------------------------
+
+class TestJsonExtraction(unittest.TestCase):
+    """
+    Verify _extract_json_object handles all the ways Claude can wrap JSON.
+    These tests cover the three bugs fixed:
+      1. max_tokens too low (Config default raised to 16000)
+      2. Preamble text before the JSON object
+      3. Markdown fences around the JSON
+    """
+
+    def setUp(self):
+        import os
+        os.environ.setdefault("ANTHROPIC_API_KEY", "dummy")
+        self.agent = ComplianceAgent.__new__(ComplianceAgent)  # skip __init__ (no real API)
+
+    def test_clean_json_unchanged(self):
+        raw = '{"key": "value"}'
+        self.assertEqual(self.agent._extract_json_object(raw), raw)
+
+    def test_strips_markdown_json_fence(self):
+        raw = '```json\n{"key": "value"}\n```'
+        result = self.agent._extract_json_object(raw)
+        self.assertEqual(json.loads(result), {"key": "value"})
+
+    def test_strips_plain_code_fence(self):
+        raw = '```\n{"key": "value"}\n```'
+        result = self.agent._extract_json_object(raw)
+        self.assertEqual(json.loads(result), {"key": "value"})
+
+    def test_strips_preamble_text(self):
+        """Claude sometimes writes 'Here is the JSON:' before the object."""
+        raw = 'Here is the compliance report:\n\n{"report_id": "abc"}'
+        result = self.agent._extract_json_object(raw)
+        self.assertEqual(json.loads(result), {"report_id": "abc"})
+
+    def test_strips_postamble_text(self):
+        raw = '{"report_id": "abc"}\n\nLet me know if you need anything else.'
+        result = self.agent._extract_json_object(raw)
+        self.assertEqual(json.loads(result), {"report_id": "abc"})
+
+    def test_strips_both_preamble_and_postamble(self):
+        raw = 'Sure! Here you go:\n{"x": 1}\nHope that helps!'
+        result = self.agent._extract_json_object(raw)
+        self.assertEqual(json.loads(result), {"x": 1})
+
+    def test_returns_text_as_is_when_no_braces(self):
+        """If there's no JSON object at all, pass through so json.loads reports the error."""
+        raw = "Sorry, I cannot generate this report."
+        result = self.agent._extract_json_object(raw)
+        self.assertEqual(result, raw)
+
+    def test_max_tokens_is_at_least_16000(self):
+        """Regression: max_tokens was 8192 causing truncated JSON."""
+        import os
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        config = Config.__new__(Config)
+        config.__dict__.update(Config.__dataclass_fields__)
+        # Read default directly from the dataclass field
+        import dataclasses
+        defaults = {f.name: f.default for f in dataclasses.fields(Config)}
+        self.assertGreaterEqual(
+            defaults["max_tokens"], 32000,
+            "max_tokens default must be >= 32000 to avoid JSON truncation"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — CLI dry-run (end-to-end without API)
+# ---------------------------------------------------------------------------
+
+class TestCliDryRun(unittest.TestCase):  # was Test 6, now Test 7
+    """
+    Invoke the CLI as a subprocess in --dry-run mode.
+    Verifies the CLI parses arguments correctly and the mapper pipeline
+    runs end-to-end without touching the API.
+    """
+
+    PYTHON = str(PROJECT_ROOT / ".venv" / "bin" / "python")
+    CLI = str(PROJECT_ROOT / "cli.py")
+
+    def _run_cli(self, extra_args: list[str]) -> subprocess.CompletedProcess:
+        base_args = [
+            self.PYTHON, self.CLI,
+            "--company", "Test Corp",
+            "--industry", "Healthcare",
+            "--country", "US",
+            "--listed-status", "Private",
+            "--audit-topic", "Cybersecurity",
+        ]
+        return subprocess.run(
+            base_args + extra_args,
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+        )
+
+    def test_dry_run_exits_zero(self):
+        result = self._run_cli(["--dry-run"])
+        self.assertEqual(result.returncode, 0,
+                         f"CLI exited non-zero.\nstdout: {result.stdout}\nstderr: {result.stderr}")
+
+    def test_dry_run_shows_jurisdiction(self):
+        result = self._run_cli(["--dry-run"])
+        self.assertIn("Jurisdiction", result.stdout)
+        self.assertIn("US", result.stdout)
+
+    def test_dry_run_shows_frameworks(self):
+        result = self._run_cli(["--dry-run"])
+        self.assertIn("HIPAA", result.stdout,
+                      "HIPAA should appear in dry-run output for US Healthcare Cybersecurity")
+
+    def test_dry_run_no_api_key_needed(self):
+        """Dry-run should work even with a dummy/missing API key."""
+        env = {"ANTHROPIC_API_KEY": "dummy-key-for-dry-run"}
+        result = subprocess.run(
+            [
+                self.PYTHON, self.CLI,
+                "--company", "Test",
+                "--industry", "Technology",
+                "--country", "UK",
+                "--listed-status", "Private",
+                "--audit-topic", "IT General Controls",
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0)
+
+    def test_missing_args_exits_nonzero(self):
+        """CLI without required args and without --interactive should fail."""
+        result = subprocess.run(
+            [self.PYTHON, self.CLI, "--company", "Only Company"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_invalid_industry_rejected_by_cli(self):
+        """argparse should reject an invalid --industry value."""
+        result = subprocess.run(
+            [
+                self.PYTHON, self.CLI,
+                "--company", "X", "--industry", "Astrology",
+                "--country", "US", "--listed-status", "Private",
+                "--audit-topic", "Cybersecurity",
+            ],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr.lower(),
+                      "argparse should report 'invalid choice'")
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
