@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -93,6 +93,39 @@ class GapRiskSummary(BaseModel):
     )
 
 
+ReferenceCheckKind = Literal[
+    "identifier_found",         # identifier exists in the official clause list
+    "parent_identifier_found",  # reference is finer than the list; its parent exists
+    "identifier_not_found",     # framework covered, identifier not in its official list
+    "no_locator",               # framework recognised, no clause locator in the text
+    "framework_not_covered",    # mapped framework without an official clause list yet
+    "unmapped_framework",       # names no framework in the mapped set
+]
+
+
+class ReferenceCheck(BaseModel):
+    """Result of checking one model-generated clause reference.
+
+    Set by the agent after validation; never requested from the model.
+    ``status`` is always "unverified": even a found identifier only proves the
+    clause exists, not that it says what the model claims.
+    """
+
+    location: str = Field(description="Control ID or '<regulation> (regulation)'")
+    field: Literal["requirement_source", "applicable_sections"]
+    reference: str
+    framework_key: Optional[str] = None
+    status: Literal["unverified"] = "unverified"
+    check: ReferenceCheckKind
+    confidence: float = Field(
+        ge=0.0, le=1.0,
+        description="Heuristic score from the check outcome, not a probability. "
+                    "Never 1.0 because clause content is not verified.",
+    )
+    matched_identifiers: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Top-level report
 # ---------------------------------------------------------------------------
@@ -117,3 +150,5 @@ class ComplianceReport(BaseModel):
     disclaimer: str = DISCLAIMER
     # Set by the agent after validation; never requested from the model.
     warnings: list[str] = Field(default_factory=list)
+    # Set by the agent after validation; never requested from the model.
+    reference_checks: list[ReferenceCheck] = Field(default_factory=list)

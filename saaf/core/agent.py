@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import asdict
 from typing import Optional
 
 from pydantic import ValidationError
@@ -16,8 +17,8 @@ from config import Config
 from saaf.core.audit_trail import AuditTrail, sanitize_endpoint, utc_now
 from saaf.core.llm import LLMError, create_client
 from saaf.core.mapper import FrameworkMapper, FrameworkMatch, MappingResult
-from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
-from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
+from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport, ReferenceCheck
+from saaf.core.reference_check import UNVERIFIED_NOTE, check_references
 from saaf.knowledge.frameworks import KB_VERSION
 from saaf.knowledge.regulations import jurisdiction_warning
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
@@ -140,11 +141,18 @@ class ComplianceAgent:
                  len(report.framework_assessments),
                  len(report.mandatory_regulations))
 
-        # Step 5: Heuristic reference check (does not verify clause text)
+        # Step 5: Compare references with the official clause lists. This shows
+        # that a cited clause exists, not what it says: every reference stays
+        # "unverified" (labelled, with a heuristic confidence score).
         log.warning(UNVERIFIED_NOTE)
-        for s in find_suspect_references(report, mapping):
-            log.warning("Suspect reference [%s %s]: %r (%s)",
-                        s.location, s.field, s.reference, s.reason)
+        # Overwrite anything the model supplied: reference checks are agent-generated only
+        report.reference_checks = [
+            ReferenceCheck(**asdict(r)) for r in check_references(report, mapping)
+        ]
+        for r in report.reference_checks:
+            if r.check in ("identifier_not_found", "unmapped_framework"):
+                log.warning("Suspect reference [%s %s]: %r (%s; confidence %.2f)",
+                            r.location, r.field, r.reference, r.note, r.confidence)
 
         return report, mapping
 
@@ -220,6 +228,10 @@ class ComplianceAgent:
 
         if "disclaimer" in data:
             log.warning("Model supplied a disclaimer — ignoring and using the standard text")
+
+        # Agent-generated only; a model-supplied value must not reach validation
+        if data.pop("reference_checks", None) is not None:
+            log.warning("Model supplied reference_checks — ignoring; the agent computes them")
 
         try:
             report = ComplianceReport(**data)

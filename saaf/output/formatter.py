@@ -4,6 +4,8 @@ Rich-based CLI report renderer.
 
 from __future__ import annotations
 
+from collections import Counter
+from dataclasses import asdict
 from typing import Optional
 
 from rich import box
@@ -13,8 +15,8 @@ from rich.table import Table
 from rich.text import Text
 
 from saaf.core.mapper import MappingResult
-from saaf.core.models import ComplianceReport, ControlObjective
-from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
+from saaf.core.models import ComplianceReport, ControlObjective, ReferenceCheck
+from saaf.core.reference_check import CONFIDENCE, UNVERIFIED_NOTE, check_references
 
 console = Console()
 
@@ -38,16 +40,26 @@ def _risk_badge(rating: str) -> Text:
 def render_references_note(
     report: ComplianceReport, mapping: Optional[MappingResult] = None, *, target: Optional[Console] = None
 ) -> None:
-    """Print the unverified-references note and any suspect references."""
+    """Print the unverified-references note, a per-outcome summary and the weak references."""
     out = target or console
     out.print(Panel(UNVERIFIED_NOTE, title="References", border_style="yellow", padding=(0, 2)))
-    if mapping is None:
+    checks = list(report.reference_checks)
+    if not checks and mapping is not None:
+        checks = [ReferenceCheck(**asdict(r)) for r in check_references(report, mapping)]
+    if not checks:
+        out.print()
         return
-    suspects = find_suspect_references(report, mapping)
-    if suspects:
-        out.print("  [bold yellow]Suspect references (name no mapped framework):[/bold yellow]")
-        for s in suspects:
-            out.print(f"    - {s.location} / {s.field}: {s.reference}", markup=False)
+    counts = Counter(c.check for c in checks)
+    out.print("  [bold]Reference checks[/bold] (all references are [yellow]unverified[/yellow]; "
+              "confidence is a heuristic score, not a probability):")
+    for check, n in sorted(counts.items(), key=lambda kv: -CONFIDENCE[kv[0]]):
+        out.print(f"    {n:3d} x {check}  (confidence {CONFIDENCE[check]:.2f})", markup=False)
+    weak = [c for c in checks if c.check in ("identifier_not_found", "unmapped_framework")]
+    if weak:
+        out.print("  [bold yellow]References to check first (not in the official list, or "
+                  "name no mapped framework):[/bold yellow]")
+        for c in weak:
+            out.print(f"    - {c.location} / {c.field}: {c.reference}  [{c.note}]", markup=False)
     out.print()
 
 
