@@ -43,7 +43,7 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 - Given an EU, Financial Services profile, the mapping includes GDPR and DORA.
 - Given any profile, every `FrameworkMatch` carries a non-empty rationale.
 - Given any profile, the system prompt lists only the mapped frameworks and instructs the model not to reference others.
-- Given a model response that contains a framework not in the mapped set, the agent flags or rejects it. **Limitation, stated honestly:** this is not implemented today. The restriction is a prompt instruction only, and `framework_assessments` / `mandatory_regulations` are not cross-checked against the mapping (see Coverage gaps).
+- Given a model response that contains a framework not in the mapped set, the agent rejects it with a `ComplianceReportError` that carries the raw response. After parsing, `ComplianceAgent._check_grounding` compares `framework_assessments[].framework_name` and `mandatory_regulations[].regulation_name` against the mapped frameworks (case-insensitive; the full name, key, name before the dash, and abbreviations in the full name are accepted). **Limitation, stated honestly:** names are matched, not clauses, so a wrong `requirement_source` inside a mapped framework is not caught (see Coverage gaps).
 
 **CO-2 — Valid output**
 - Given a response wrapped in markdown fences or surrounded by prose, the agent extracts the JSON object and validates it.
@@ -81,14 +81,14 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 
 ## 5. Coverage gaps
 
-- **No post-hoc grounding check.** Model output is not compared with the mapped framework set; the restriction relies on the prompt alone.
+- **Grounding check matches names only.** Frameworks and regulations outside the mapping are rejected, but alias matching is a heuristic over `full_name`/key/abbreviations; a legitimate model rewording not covered by it will be rejected (fails closed).
 - **Clause references are unverified.** `requirement_source` and `applicable_sections` are model-generated and not checked against any source text, so a plausible but wrong article number can pass validation.
 - **Knowledge base is hand-maintained and static.** There is no versioning, no review date per framework, and no process for regulatory change. Boundary cases (e.g. a fintech that may or may not be a credit institution under DORA) are listed as an open question in the plan and are not handled explicitly.
 - **Limited jurisdiction coverage.** The system prompt names US, EU, UK, Australia and Singapore. Other countries resolve to a generic jurisdiction and the output may be thin.
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
 - **Real entity names are sent to a third-party API** with no warning or opt-out.
 - **No persistent audit trail** (see section 7).
-- **Tests are unit-level only.** No test exercises `ComplianceAgent.run` with a mocked or recorded API response, and no test covers a model response with an out-of-scope framework. Not evaluated against real model output.
+- **Tests are unit-level only.** Only one test exercises `ComplianceAgent.run` with a mocked response (out-of-scope framework). Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
 - **Repo ownership.** Plan was submitted on the maintainer's behalf by a colleague; the Check and Act PDCA phases are not started.
 
@@ -100,7 +100,7 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 |---|---|---|
 | CO-1 #1–#3 (mapping) | ☐ | Candidate tests: `TestFrameworkMapper.test_us_healthcare_includes_hipaa`, `test_us_private_excludes_sox`, `test_eu_finserv_includes_dora`, `test_framework_matches_have_rationale` — not yet run |
 | CO-1 #4 (prompt lists only mapped frameworks) | ☐ | Candidate: `TestSystemPromptBuilder.test_system_prompt_injects_framework_names` — not yet run |
-| CO-1 #5 (out-of-scope framework rejected) | ☐ | Not implemented |
+| CO-1 #5 (out-of-scope framework rejected) | ☑ | `TestGroundingCheck.*` passed on 2026-10-06 (`python -m unittest discover -s tests`, 52 tests OK); mocked API only, not a live model run |
 | CO-2 #1–#2 (JSON extraction) | ☐ | Candidate tests: `TestJsonExtraction.*` — not yet run; no-JSON error path untested |
 | CO-2 #3 (schema violation) | ☐ | Candidate: `TestPydanticModels.test_invalid_*_rejected`; agent-level path untested |
 | CO-2 #4 (CLI rejects bad enum) | ☐ | Candidate: `TestCliDryRun.test_invalid_industry_rejected_by_cli` — not yet run |

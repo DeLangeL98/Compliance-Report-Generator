@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from config import Config
 from saaf.core.audit_trail import AuditTrail, utc_now
-from saaf.core.mapper import FrameworkMapper, MappingResult
+from saaf.core.mapper import FrameworkMapper, FrameworkMatch, MappingResult
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
 from saaf.knowledge.frameworks import KB_VERSION
@@ -30,6 +30,28 @@ class ComplianceReportError(Exception):
     def __init__(self, message: str, raw_response: str = "") -> None:
         super().__init__(message)
         self.raw_response = raw_response
+
+
+def _normalise_name(name: str) -> str:
+    """Case-insensitive, punctuation- and whitespace-insensitive comparison form."""
+    return re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
+
+
+def _name_aliases(match: FrameworkMatch) -> set[str]:
+    """Names a mapped framework may legitimately appear under in the model output."""
+    full = match.full_name
+    raw = {full, match.key, match.key.replace("_", " ")}
+    head = re.split(r"\s+[—–-]\s+", full)[0]
+    raw.add(head)
+    raw.add(re.sub(r"\s*\([^)]*\)", "", head))  # head without parentheticals
+    for inner in re.findall(r"\(([^)]*)\)", full):  # abbreviations, e.g. (SOX)
+        for token in inner.split("/"):
+            token = token.strip()
+            if " " not in token and sum(c.isupper() for c in token) >= 2 and len(token) >= 3:
+                raw.add(token)
+    for part in head.split(" / "):
+        raw.add(re.sub(r"\s*\([^)]*\)", "", part))
+    return {n for n in (_normalise_name(r) for r in raw) if n}
 
 
 class ComplianceAgent:
@@ -79,6 +101,10 @@ class ComplianceAgent:
 
         # Step 4: Parse and validate
         report = self._parse_and_validate(raw_json, audit_input)
+
+        # Step 5: Reject anything the deterministic mapping did not select
+        self._check_grounding(report, mapping, raw_json)
+
         if self.audit_trail is not None:
             self.audit_trail.record(
                 report_id=report.report_id,
@@ -219,6 +245,33 @@ class ComplianceAgent:
         # Not model-controlled: always force the standard disclaimer.
         report.disclaimer = DISCLAIMER
         return report
+
+    @staticmethod
+    def _check_grounding(
+        report: ComplianceReport, mapping: MappingResult, raw_json: str = ""
+    ) -> None:
+        """
+        Reject any framework or regulation that is not in the deterministic mapping.
+
+        Mandatory regulations are drawn from the same registry as frameworks
+        (mapper regulation keys are framework keys), so both lists are checked
+        against the mapped frameworks.
+        """
+        allowed = [_name_aliases(m) for m in mapping.framework_matches]
+        names = [a.framework_name for a in report.framework_assessments]
+        names += [r.regulation_name for r in report.mandatory_regulations]
+        ungrounded = [
+            n for n in names
+            if not any(_normalise_name(n) in aliases for aliases in allowed)
+        ]
+
+        if ungrounded:
+            log.error("Grounding check failed: not in mapping: %s", ungrounded)
+            raise ComplianceReportError(
+                "Report references frameworks/regulations outside the mapped set: "
+                + ", ".join(repr(n) for n in ungrounded),
+                raw_response=raw_json,
+            )
 
     @staticmethod
     def _extract_json_object(text: str) -> str:
