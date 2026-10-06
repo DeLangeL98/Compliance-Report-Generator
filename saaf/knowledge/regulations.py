@@ -7,6 +7,8 @@ Jurisdiction aliases normalise country/region inputs to canonical keys.
 
 from __future__ import annotations
 
+from typing import Optional
+
 # ---------------------------------------------------------------------------
 # Jurisdiction alias map — maps user inputs to canonical keys
 # ---------------------------------------------------------------------------
@@ -38,7 +40,7 @@ JURISDICTION_ALIASES: dict[str, str] = {
     "LT": "EU", "LITHUANIA": "EU",
     "LU": "EU", "LUXEMBOURG": "EU",
     "MT": "EU", "MALTA": "EU",
-    "NL": "EU", "NETHERLANDS": "EU", "THE NETHERLANDS": "EU",
+    "NL": "EU", "NETHERLANDS": "EU", "THE NETHERLANDS": "EU", "NEDERLAND": "EU",
     "PL": "EU", "POLAND": "EU",
     "PT": "EU", "PORTUGAL": "EU",
     "RO": "EU", "ROMANIA": "EU",
@@ -61,6 +63,20 @@ JURISDICTION_ALIASES: dict[str, str] = {
     "JP": "JP", "JPN": "JP", "JAPAN": "JP",
 }
 
+# ---------------------------------------------------------------------------
+# Country-level keys
+#
+# Jurisdiction groups (above) are deliberately coarse: every EU member state
+# resolves to "EU". Some rules are national, e.g. the Dutch government baseline
+# BIO2 applies to the Netherlands only. A country key is resolved alongside the
+# jurisdiction group and never replaces it, so EU rules still apply to Dutch
+# entities. Add a country here only when a framework is restricted to it.
+# ---------------------------------------------------------------------------
+
+COUNTRY_ALIASES: dict[str, str] = {
+    "NL": "NL", "NETHERLANDS": "NL", "THE NETHERLANDS": "NL", "NEDERLAND": "NL",
+}
+
 # Wildcard sentinel
 _ANY = "*"
 
@@ -68,6 +84,11 @@ _ANY = "*"
 def normalise_jurisdiction(country: str) -> str:
     """Return the canonical jurisdiction key, or 'OTHER' if unknown."""
     return JURISDICTION_ALIASES.get(country.upper().strip(), "OTHER")
+
+
+def normalise_country(country: str) -> Optional[str]:
+    """Return the country key (e.g. "NL") if a country-specific rule set exists, else None."""
+    return COUNTRY_ALIASES.get(country.upper().strip())
 
 
 def jurisdiction_warning(country: str) -> str | None:
