@@ -113,8 +113,10 @@ Examples:
                         help="Audit topic")
 
     # Output options
-    parser.add_argument("--output", choices=["report", "json"], default="report",
-                        help="Output format (default: report)")
+    parser.add_argument("--output", choices=["report", "json", "findings"],
+                        default="report",
+                        help="Output format (default: report); 'findings' exports "
+                             "SAAF finding-schema JSON")
     parser.add_argument("--output-file", dest="output_file",
                         help="Save JSON output to this file path")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -220,8 +222,12 @@ def main() -> int:
         return 1
 
     # Output
-    if args.output == "json":
-        json_str = report.model_dump_json(indent=2)
+    if args.output in ("json", "findings"):
+        if args.output == "findings":
+            from saaf.output.findings import report_to_findings
+            json_str = json.dumps(report_to_findings(report), indent=2)
+        else:
+            json_str = report.model_dump_json(indent=2)
         if args.output_file:
             with open(args.output_file, "w", encoding="utf-8") as f:
                 f.write(json_str)
