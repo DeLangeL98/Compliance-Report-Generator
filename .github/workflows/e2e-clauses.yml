@@ -1,0 +1,58 @@
+name: Clause sources e2e
+
+# Separate from the unit-test workflow: needs network access to the official
+# sources and takes several minutes. Re-extracts every clause list from the
+# latest official text, runs the reference checks on it and compares the
+# committed lists with it (tests/e2e/test_clause_sources_e2e.py).
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"   # weekly, Monday 05:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "saaf/knowledge/clause_data/**"
+      - "saaf/knowledge/clauses.py"
+      - "saaf/core/clause_check.py"
+      - "saaf/core/reference_check.py"
+      - "tools/clause_sources/**"
+      - "tests/e2e/**"
+      - ".github/workflows/e2e-clauses.yml"
+
+concurrency:
+  group: e2e-clauses-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-dev.txt
+
+      - name: Run clause source e2e tests
+        run: .venv/bin/python -m xmlrunner discover -s tests/e2e -t . -o e2e-results
+        env:
+          SAAF_E2E: "1"
+          ANTHROPIC_API_KEY: ci-dummy-key   # never used; no API calls
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e-results/

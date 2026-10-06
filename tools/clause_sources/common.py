@@ -45,6 +45,7 @@ granularity says so):
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -54,7 +55,9 @@ from pathlib import Path
 from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = REPO_ROOT / "saaf" / "knowledge" / "clause_data"
+# SAAF_CLAUSE_OUT_DIR redirects the output (used by the e2e drift job so the
+# committed lists are never overwritten).
+DATA_DIR = Path(os.environ.get("SAAF_CLAUSE_OUT_DIR") or REPO_ROOT / "saaf" / "knowledge" / "clause_data")
 USER_AGENT = "Mozilla/5.0 (compatible; SAAF-clause-index-builder/1.0)"
 
 # Label for the level that is validated. Whatever the label, references MORE
@@ -145,7 +148,7 @@ def write_clause_file(framework_key: str, granularity: str, rationale: str,
     path = DATA_DIR / f"{framework_key}.json"
     path.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     counts = {i["code"]: len(i["identifiers"]) for i in instruments}
-    print(f"wrote {path.relative_to(REPO_ROOT)}  {counts}", file=sys.stderr)
+    print(f"wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}  {counts}", file=sys.stderr)
     return path
 
 
