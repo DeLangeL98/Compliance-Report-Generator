@@ -17,6 +17,7 @@ from config import Config
 from saaf.core.audit_trail import AuditTrail, utc_now
 from saaf.core.mapper import FrameworkMapper, MappingResult
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
+from saaf.knowledge.frameworks import KB_VERSION
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 
 log = logging.getLogger("saaf.agent")
@@ -55,6 +56,8 @@ class ComplianceAgent:
         log.info("Starting audit: %s | %s | %s | %s | %s",
                  audit_input.company_name, audit_input.industry,
                  audit_input.country, audit_input.listed_status, audit_input.audit_topic)
+
+        log.info("Knowledge base version: %s", KB_VERSION)
 
         # Step 1: Deterministic framework mapping (no API call)
         mapping = FrameworkMapper(audit_input).map()

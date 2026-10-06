@@ -733,3 +733,27 @@ FRAMEWORK_REGISTRY: dict[str, dict] = {
         "listed_status": ["Public"],
     },
 }
+
+
+# ── Knowledge-base metadata (issue #9) ────────────────────────────────────
+#
+# KB_VERSION identifies the hand-maintained knowledge base content. Bump it
+# whenever framework or regulation entries change.
+KB_VERSION = "0.1.0"
+
+# Per-framework provenance. Keys:
+#   last_reviewed: ISO date (YYYY-MM-DD) a maintainer last verified the entry
+#                  against its source, or None if never reviewed.
+#   source:        canonical official URL or citation, or None if not yet
+#                  confirmed. Only fill in values that have been verified.
+_FRAMEWORK_METADATA: dict[str, dict] = {
+    "GDPR": {"source": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"},
+    "DORA": {"source": "https://eur-lex.europa.eu/eli/reg/2022/2554/oj"},
+    "MiFID_II": {"source": "https://eur-lex.europa.eu/eli/dir/2014/65/oj"},
+}
+
+for _key, _entry in FRAMEWORK_REGISTRY.items():
+    _meta = _FRAMEWORK_METADATA.get(_key, {})
+    _entry.setdefault("last_reviewed", _meta.get("last_reviewed"))
+    _entry.setdefault("source", _meta.get("source"))
+del _key, _entry, _meta

@@ -24,7 +24,7 @@ from saaf.core.agent import ComplianceAgent
 from saaf.core.mapper import FrameworkMapper
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.output import formatter
-from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
+from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY, KB_VERSION
 from saaf.knowledge.regulations import normalise_jurisdiction
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 from config import Config
@@ -499,6 +499,33 @@ class TestCliDryRun(unittest.TestCase):  # was Test 6, now Test 7
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid choice", result.stderr.lower(),
                       "argparse should report 'invalid choice'")
+
+
+class TestKnowledgeBaseMetadata(unittest.TestCase):
+    def test_kb_version_is_non_empty_string(self):
+        self.assertIsInstance(KB_VERSION, str)
+        self.assertTrue(KB_VERSION)
+
+    def test_all_entries_have_metadata_keys(self):
+        for key, fw in FRAMEWORK_REGISTRY.items():
+            self.assertIn("last_reviewed", fw, key)
+            self.assertIn("source", fw, key)
+
+    def test_metadata_values_are_well_formed(self):
+        from datetime import date
+        for key, fw in FRAMEWORK_REGISTRY.items():
+            if fw["last_reviewed"] is not None:
+                date.fromisoformat(fw["last_reviewed"])  # raises if malformed
+            if fw["source"] is not None:
+                self.assertTrue(fw["source"].strip(), key)
+
+    def test_report_entries_missing_review_date(self):
+        # Informational: lists entries a maintainer still needs to review.
+        # Deliberately does not fail, so dates are only ever set honestly.
+        missing = sorted(k for k, fw in FRAMEWORK_REGISTRY.items()
+                         if fw["last_reviewed"] is None)
+        print("\nFrameworks missing last_reviewed: %d/%d: %s"
+              % (len(missing), len(FRAMEWORK_REGISTRY), ", ".join(missing)))
 
 
 class TestDisclaimerNotOverridable(unittest.TestCase):
