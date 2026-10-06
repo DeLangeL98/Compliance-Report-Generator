@@ -139,7 +139,7 @@ def uk_gdpr() -> dict:
     base = re.escape("http://www.legislation.gov.uk/eur/2016/679")
     raw: list[str] = []  # raw list (duplicates would be visible)
     art_nums, n_dots_p2, repealed_arts = [], 0, []
-    for m, e, ex in d.elements("P1", re.compile(base + r"/article/([0-9]+[A-Za-z]*)\.?$")):
+    for m, _e, ex in d.elements("P1", re.compile(base + r"/article/([0-9]+[A-Za-z]*)\.?$")):
         a = lc(m.group(1))
         if ex:
             repealed_arts.append(a)
@@ -222,12 +222,12 @@ def dpa() -> dict:
                 continue
         raw.append(f"sec:{s}")
         secs.append(s)
-    for m, e, ex in d.elements("P2", re.compile(base + r"/section/([0-9]+[A-Za-z]*)/([0-9A-Za-z]+)$")):
+    for m, _e, ex in d.elements("P2", re.compile(base + r"/section/([0-9]+[A-Za-z]*)/([0-9A-Za-z]+)$")):
         if not ex:
             raw.append(f"sec:{lc(m.group(1))}({lc(m.group(2))})")
             sub_ct += 1
     sch_paras, rep_paras, stub_paras = [], [], []
-    for m, e, ex in d.elements("Schedule", re.compile(base + r"/schedule/([0-9A-Za-z]+)$")):
+    for m, _e, ex in d.elements("Schedule", re.compile(base + r"/schedule/([0-9A-Za-z]+)$")):
         if not ex:
             raw.append(f"sch:{lc(m.group(1))}")
     for m, e, ex in d.elements("P1", re.compile(base + r"/schedule/([0-9A-Za-z]+)/paragraph/([0-9]+[A-Za-z]*)$")):
@@ -341,8 +341,8 @@ def ccpa() -> dict:
     toc_cols = cols("law_toc_sections_tbl.sql")
     print("California:", file=sys.stderr)
     check(sec_cols[:3] == ["ID", "LAW_CODE", "SECTION_NUM"], f"law_section_tbl columns from vendor loader: {sec_cols[:6]}...")
-    sec_rows = [dict(zip(sec_cols, r)) for r in dat_rows(z.read("LAW_SECTION_TBL.dat").decode("utf8"))]
-    toc_rows = [dict(zip(toc_cols, r)) for r in dat_rows(z.read("LAW_TOC_SECTIONS_TBL.dat").decode("utf8"))]
+    sec_rows = [dict(zip(sec_cols, r, strict=False)) for r in dat_rows(z.read("LAW_SECTION_TBL.dat").decode("utf8"))]
+    toc_rows = [dict(zip(toc_cols, r, strict=False)) for r in dat_rows(z.read("LAW_TOC_SECTIONS_TBL.dat").decode("utf8"))]
     # Title 1.81.5 (Division 3, Part 4) of the Civil Code
     mine = [r for r in sec_rows
             if r["LAW_CODE"] == "CIV" and r["DIVISION"] == "3." and r["TITLE"] == "1.81.5."
@@ -358,7 +358,8 @@ def ccpa() -> dict:
     check(len(nums) == len(set(nums)), "no duplicate section numbers")
     check(sorted(nums) == sorted(toc_nums), f"LAW_SECTION_TBL and LAW_TOC_SECTIONS_TBL agree ({len(nums)} sections)")
     check(nums and all(re.fullmatch(r"1798\.\d+(\.\d+)?", n) for n in nums), "all numbers look like 1798.x[.y]")
-    first = min(nums, key=common.natural_key); last = max(nums, key=common.natural_key)
+    first = min(nums, key=common.natural_key)
+    last = max(nums, key=common.natural_key)
     check((first, last) == ("1798.100", "1798.199.100"), f"range is 1798.100 .. 1798.199.100 as in the title heading: {heading!r}")
     ids = [f"sec:{n}" for n in nums]
     ids, bad = split_grammar(ids)

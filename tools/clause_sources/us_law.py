@@ -260,8 +260,8 @@ def paragraph_ids(section_id: str, paragraphs: list[str]) -> tuple[list[str], li
                 continue
             # emit every level opened by this P (a chain opens several levels)
             for stack, n in opened:
-                for k in range(len(stack) - n + 1, len(stack) + 1):
-                    ids.append("cfr:" + section_id + "".join(f"({x})" for x in stack[:k]))
+                ids.extend("cfr:" + section_id + "".join(f"({x})" for x in stack[:k])
+                           for k in range(len(stack) - n + 1, len(stack) + 1))
     except ParagraphError as exc:
         # Fallback: only the top-level lettered paragraphs, taken as the strict sequence
         # a, b, c, ... of paragraphs that open with that marker (reliable even when a
@@ -466,16 +466,16 @@ def parse_usc(cache: Path | None) -> dict:
         credits[num] = html.unescape(re.sub(r"<[^>]*>", "", mc.group(1))) if mc else ""
         # paragraph-level: heading elements ("(a) Heading": subsection-head, paragraph-head,
         # subparagraph-head, clause-head ...) and statutory-body* paragraphs ("(1) text").
-        paras = []
-        for m in re.finditer(
+        paras = [
+            re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]*>", "", m.group(1)))).strip()
+            for m in re.finditer(
                 r'<(?:h\d|p) class="(?:[a-z]+-head|statutory-body[a-z0-9-]*)">(.*?)</(?:h\d|p)>',
-                body, re.S):
-            paras.append(re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]*>", "", m.group(1)))).strip())
+                body, re.S)
+        ]
         use_kinds(USC_KINDS)
         pids, probs = paragraph_ids(num, paras)
         problems.extend(probs)
-        for pid in pids:
-            ids.append("sec:" + pid[len("cfr:"):])
+        ids.extend("sec:" + pid[len("cfr:"):] for pid in pids)
     sub1 = [n for n in listed if 6801 <= int(re.match(r"\d+", n).group(0)) <= 6809]
     sub2 = [n for n in listed if 6821 <= int(re.match(r"\d+", n).group(0)) <= 6827]
     assert listed == toc_secs, (listed, toc_secs)

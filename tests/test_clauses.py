@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import sys
 import unittest
-from types import SimpleNamespace as NS
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -105,7 +105,7 @@ def _check_one(ref, parent, *mapped, field="requirement_source"):
 
 class TestParseLocators(unittest.TestCase):
     def locs(self, text):
-        return [(l.kind, l.number, l.subs) for l in parse_locators(text)]
+        return [(loc.kind, loc.number, loc.subs) for loc in parse_locators(text)]
 
     def test_article_paragraph_and_point(self):
         self.assertEqual(self.locs("GDPR Art. 32(1)(b)"), [("art", "32", ("1", "b"))])

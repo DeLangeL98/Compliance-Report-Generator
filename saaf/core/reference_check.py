@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from saaf.core.clause_check import (
     FOUND_EXACT,
@@ -242,13 +242,15 @@ def check_references(
     out: List[ReferenceCheckResult] = []
 
     for fw in report.framework_assessments:
-        for ctrl in fw.control_objectives:
-            out.append(check_reference(ctrl.control_id, "requirement_source",
-                                       ctrl.requirement_source, fw.framework_name,
-                                       mapped_keys, aliases, lists))
+        out.extend(
+            check_reference(ctrl.control_id, "requirement_source", ctrl.requirement_source,
+                            fw.framework_name, mapped_keys, aliases, lists)
+            for ctrl in fw.control_objectives
+        )
     for reg in report.mandatory_regulations:
-        for section in reg.applicable_sections:
-            out.append(check_reference(f"{reg.regulation_name} (regulation)",
-                                       "applicable_sections", section, reg.regulation_name,
-                                       mapped_keys, aliases, lists))
+        out.extend(
+            check_reference(f"{reg.regulation_name} (regulation)", "applicable_sections", section,
+                            reg.regulation_name, mapped_keys, aliases, lists)
+            for section in reg.applicable_sections
+        )
     return out

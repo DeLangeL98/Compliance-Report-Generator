@@ -20,11 +20,13 @@ def main() -> int:
     rows = []
     for path in sorted(DATA_DIR.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
-        for inst in data["instruments"]:
-            rows.append((
+        rows.extend(
+            (
                 data["framework_key"], inst["code"], inst["title"], data["granularity"],
                 len(inst["identifiers"]), inst["version"], inst["source"], inst["retrieved_on"],
-            ))
+            )
+            for inst in data["instruments"]
+        )
     print("| framework | instrument | granularity | identifiers | version | source | last_reviewed |")
     print("|---|---|---|---:|---|---|---|")
     for key, code, _title, gran, n, version, source, retrieved in rows:

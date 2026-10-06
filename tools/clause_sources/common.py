@@ -99,7 +99,7 @@ def fetch(url: str, *, accept: str | None = None, lang: str | None = None,
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
-        except Exception as exc:  # noqa: BLE001 - report after retries
+        except Exception as exc:  # noqa: BLE001, PERF203 - report after retries
             last = exc
             time.sleep(2 * (attempt + 1))
     raise RuntimeError(f"failed to fetch {url}: {last}")

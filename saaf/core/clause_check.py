@@ -90,8 +90,8 @@ def _number_list(kind: str, text: str, pos: int) -> Tuple[List[Locator], int]:
         if (is_range and kind != "sec" and prev.number.isdigit() and not prev.subs
                 and m2.group(1).isdigit() and not _subs_of(m2.group(2))
                 and 0 < int(m2.group(1)) - int(prev.number) <= 300):
-            for n in range(int(prev.number) + 1, int(m2.group(1)) + 1):
-                out.append(Locator(kind, str(n), (), str(n)))
+            out.extend(Locator(kind, str(n), (), str(n))
+                       for n in range(int(prev.number) + 1, int(m2.group(1)) + 1))
         else:
             out.append(Locator(kind, m2.group(1).lower(), _subs_of(m2.group(2)),
                                m2.group(0).strip()))
@@ -117,16 +117,21 @@ def parse_locators(text: str) -> List[Locator]:
                 consumed.append((km.start(), end))
 
     for m in re.finditer(r"\brecitals?\b\s*(\d+(?:\s*(?:,|and|&)\s*\d+)*)", text, re.IGNORECASE):
-        for n in re.findall(r"\d+", m.group(1)):
-            found.append(Locator("recital", n, (), n))
-    for m in re.finditer(r"\bannex(?:es)?\s+([ivxlc]+|[a-z])\b", text, re.IGNORECASE):
-        found.append(Locator("annex", m.group(1).upper(), (), m.group(0)))
+        found.extend(Locator("recital", n, (), n) for n in re.findall(r"\d+", m.group(1)))
+    found.extend(
+        Locator("annex", m.group(1).upper(), (), m.group(0))
+        for m in re.finditer(r"\bannex(?:es)?\s+([ivxlc]+|[a-z])\b", text, re.IGNORECASE)
+    )
 
     # NIST CSF 2.0 subcategory / category, e.g. GV.OC-01, GV.OC
-    for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})-(\d{1,2})\b", text, re.IGNORECASE):
-        found.append(Locator("sub", f"{m.group(1)}.{m.group(2)}-{m.group(3)}".upper(), (), m.group(0), True))
-    for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})\b(?!-\d)", text, re.IGNORECASE):
-        found.append(Locator("cat", f"{m.group(1)}.{m.group(2)}".upper(), (), m.group(0), True))
+    found.extend(
+        Locator("sub", f"{m.group(1)}.{m.group(2)}-{m.group(3)}".upper(), (), m.group(0), True)
+        for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})-(\d{1,2})\b", text, re.IGNORECASE)
+    )
+    found.extend(
+        Locator("cat", f"{m.group(1)}.{m.group(2)}".upper(), (), m.group(0), True)
+        for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})\b(?!-\d)", text, re.IGNORECASE)
+    )
     # NIST SP 800-53 control / enhancement, e.g. AC-2, AC-2(1), AC-2 (1)
     for m in re.finditer(r"(?<![\w.])([a-z]{2})\s?-\s?(\d{1,2})(?:\s?\(\s?(\d{1,2})\s?\))?", text, re.IGNORECASE):
         subs = (m.group(3),) if m.group(3) else ()
@@ -134,8 +139,10 @@ def parse_locators(text: str) -> List[Locator]:
 
     if not any(loc.kind == "sec" for loc in found):
         # Bare dotted number such as "164.312(a)(1)" or "1798.100"
-        for m in re.finditer(rf"(?<![\d.\w])(\d{{2,4}}\.\d{{1,5}}[a-z]?)({_SUBS})", text, re.IGNORECASE):
-            found.append(Locator("sec", m.group(1).lower(), _subs_of(m.group(2)), m.group(0), True))
+        found.extend(
+            Locator("sec", m.group(1).lower(), _subs_of(m.group(2)), m.group(0), True)
+            for m in re.finditer(rf"(?<![\d.\w])(\d{{2,4}}\.\d{{1,5}}[a-z]?)({_SUBS})", text, re.IGNORECASE)
+        )
     return found
 
 
@@ -194,7 +201,7 @@ def _match_in_instrument(idx: _Index, prefix: str, loc: Locator) -> LocatorMatch
     if base not in idx.lower:
         return LocatorMatch(loc, NOT_FOUND, None, "not in the official clause list")
     cur = base
-    for depth, sub in enumerate(loc.subs):
+    for sub in loc.subs:
         nxt = f"{cur}({sub.lower()})"
         if nxt in idx.lower:
             cur = nxt
