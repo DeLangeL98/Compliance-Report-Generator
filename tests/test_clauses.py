@@ -308,6 +308,12 @@ class TestShippedClauseData(unittest.TestCase):
                     self.assertEqual(len(inst.retrieved_on), 10)
                     self.assertGreater(len(inst.identifiers), 5)
 
+    def test_granularity_table_matches_data_files(self):
+        self.assertEqual(set(GRANULARITY), set(CLAUSE_LISTS))
+        for key, cl in CLAUSE_LISTS.items():
+            with self.subTest(key=key):
+                self.assertTrue(GRANULARITY[key].startswith(cl.granularity + ":"))
+
     def test_granularity_table_covers_only_known_frameworks(self):
         from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
         for key in GRANULARITY:

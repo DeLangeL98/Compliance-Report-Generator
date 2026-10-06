@@ -87,16 +87,20 @@ CLAUSE_LISTS: Dict[str, ClauseList] = load_clause_lists()
 # tests/test_clauses.py keeps the two in step). Stated here so the choice is
 # visible in code, not only in data.
 GRANULARITY: Mapping[str, str] = {
-    "GDPR": "article-paragraph",
-    "UK_GDPR": "article-paragraph (UK GDPR); section-paragraph (DPA 2018)",
-    "DORA": "article-paragraph",
-    "NIS2": "article-paragraph",
-    "MiFID_II": "article-paragraph (Directive and MiFIR)",
-    "HIPAA": "cfr-paragraph, down to standards and implementation specifications",
-    "GLBA": "section (statute); cfr-paragraph (Safeguards Rule, Regulation P)",
-    "NIST_CSF": "subcategory",
-    "NIST_800_53": "control-enhancement",
-    "CCPA_CPRA": "section",
+    "GDPR": "article-paragraph: articles and numbered paragraphs, plus recitals",
+    "UK_GDPR": "article-paragraph: UK GDPR articles/paragraphs and recitals; "
+               "DPA 2018 sections/subsections and schedules/paragraphs",
+    "DORA": "article-paragraph: articles and numbered paragraphs, plus recitals",
+    "NIS2": "article-paragraph: articles and numbered paragraphs, plus recitals and Annexes I-II",
+    "MiFID_II": "article-paragraph: Directive 2014/65/EU and MiFIR articles and numbered "
+                "paragraphs, plus recitals and Directive annexes",
+    "HIPAA": "cfr-paragraph: 45 CFR Parts 160 and 164 down to standards and "
+             "implementation specifications",
+    "GLBA": "cfr-paragraph: Safeguards Rule and Regulation P to paragraph; the statute "
+            "(15 U.S.C. 6801-6809, 6821-6827) to subsection/paragraph",
+    "NIST_CSF": "subcategory: CSF 2.0 functions, categories and subcategories",
+    "NIST_800_53": "control-enhancement: SP 800-53 Rev 5 controls and enhancements",
+    "CCPA_CPRA": "section: Civil Code 1798.100-1798.199.100 (statute only)",
 }
 
 # ---------------------------------------------------------------------------

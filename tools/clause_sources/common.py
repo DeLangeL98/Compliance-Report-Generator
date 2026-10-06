@@ -107,7 +107,10 @@ def fetch(url: str, *, accept: str | None = None, lang: str | None = None,
 
 def natural_key(identifier: str) -> list:
     """Sort key that orders art:2 before art:10 and art:2 before art:2(1)."""
-    return [int(t) if t.isdigit() else t for t in re.findall(r"\d+|[A-Za-z]+|\W", identifier)]
+    # (0, n) for numbers, (1, s) for text: a total order even when labels such
+    # as sec:3(a1) and sec:3(1) put a number and text in the same position.
+    return [(0, int(t), "") if t.isdigit() else (1, 0, t)
+            for t in re.findall(r"\d+|[A-Za-z]+|\W", identifier)]
 
 
 def write_clause_file(framework_key: str, granularity: str, rationale: str,

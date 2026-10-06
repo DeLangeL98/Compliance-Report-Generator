@@ -199,7 +199,7 @@ def check_reference(
         if not matches:
             return _result(location, fld, reference, "no_locator", key=key,
                            note="no clause locator (article, section, control ...) found to check")
-        matched = [m.identifier for m in matches if m.identifier]
+        matched = list(dict.fromkeys(m.identifier for m in matches if m.identifier))
         missing = [m for m in matches if m.outcome not in (FOUND_EXACT, FOUND_PARENT)]
         if missing:
             return _result(location, fld, reference, "identifier_not_found", key=key,
