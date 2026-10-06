@@ -5,6 +5,8 @@ to lists of applicable framework keys from the framework registry.
 Jurisdiction aliases normalise country/region inputs to canonical keys.
 """
 
+from __future__ import annotations
+
 # ---------------------------------------------------------------------------
 # Jurisdiction alias map — maps user inputs to canonical keys
 # ---------------------------------------------------------------------------
@@ -66,6 +68,17 @@ _ANY = "*"
 def normalise_jurisdiction(country: str) -> str:
     """Return the canonical jurisdiction key, or 'OTHER' if unknown."""
     return JURISDICTION_ALIASES.get(country.upper().strip(), "OTHER")
+
+
+def jurisdiction_warning(country: str) -> str | None:
+    """Return a warning string if the country is not recognised, else None."""
+    if normalise_jurisdiction(country) != "OTHER":
+        return None
+    return (
+        f"Jurisdiction '{country}' is not recognised. Supported jurisdictions are "
+        "US, EU, UK, Australia and Singapore; the report uses a generic global "
+        "framework set and may be thin or miss local regulations."
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,10 @@ Requires `ANTHROPIC_API_KEY` set in the environment.
 - **Input**: company name, industry (e.g. `Financial Services`, `Healthcare`), country/jurisdiction, listed status (`Public` / `Private` / `Government`), audit topic (e.g. `Cybersecurity`, `Data Privacy`, `Financial Reporting`)
 - **Output**: rich terminal report or JSON listing applicable regulatory frameworks, control objectives, key gaps, and priority remediation actions
 
+## Supported jurisdictions
+
+The knowledge base targets **US, EU (incl. EEA member countries), UK, Australia and Singapore**. Canada, India and Japan have minimal partial coverage. Any other country resolves to a generic global framework set, so output may be thin. In that case the CLI prints a warning to stderr (also with `--dry-run`), a warning is logged, and the report carries a visible warning (`warnings` field in JSON).
+
 ## Audit criteria
 
 See [AUDIT-CRITERIA.md](AUDIT-CRITERIA.md) for control objectives, acceptance criteria, known gaps and observability.

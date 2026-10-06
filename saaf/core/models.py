@@ -116,3 +116,5 @@ class ComplianceReport(BaseModel):
     framework_assessments: list[FrameworkAssessment]
     gap_risk_summary: GapRiskSummary
     disclaimer: str = DISCLAIMER
+    # Set by the agent after validation; never requested from the model.
+    warnings: list[str] = Field(default_factory=list)

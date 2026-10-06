@@ -19,6 +19,7 @@ from saaf.core.mapper import FrameworkMapper, FrameworkMatch, MappingResult
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
 from saaf.knowledge.frameworks import KB_VERSION
+from saaf.knowledge.regulations import jurisdiction_warning
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 
 log = logging.getLogger("saaf.agent")
@@ -89,6 +90,10 @@ class ComplianceAgent:
                  len(mapping.framework_matches),
                  ", ".join(m.key for m in mapping.framework_matches))
 
+        warning = jurisdiction_warning(audit_input.country)
+        if warning:
+            log.warning(warning)
+
         # Step 2: Build prompts
         system_prompt = build_system_prompt(audit_input, mapping)
         user_message = build_user_message(audit_input, mapping)
@@ -101,6 +106,8 @@ class ComplianceAgent:
 
         # Step 4: Parse and validate
         report = self._parse_and_validate(raw_json, audit_input)
+        # Overwrite anything the model supplied: warnings are agent-generated only
+        report.warnings = [warning] if warning else []
 
         # Step 5: Reject anything the deterministic mapping did not select
         self._check_grounding(report, mapping, raw_json)

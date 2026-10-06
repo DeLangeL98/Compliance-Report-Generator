@@ -25,7 +25,7 @@ from saaf.core.mapper import FrameworkMapper
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.output import formatter
 from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY, KB_VERSION
-from saaf.knowledge.regulations import normalise_jurisdiction
+from saaf.knowledge.regulations import jurisdiction_warning, normalise_jurisdiction
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 from config import Config
 
@@ -634,6 +634,84 @@ class TestDisclaimerNotOverridable(unittest.TestCase):
             formatter.render_report(report)
         rendered = " ".join(cap.get().replace("│", " ").split())
         self.assertIn(DISCLAIMER, rendered)
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — Unrecognised jurisdiction warning (issue #10)
+# ---------------------------------------------------------------------------
+
+_MINIMAL_REPORT = {
+    "mandatory_regulations": [],
+    "framework_assessments": [],
+    "gap_risk_summary": {
+        "overall_risk_rating": "Low",
+        "critical_gaps": [],
+        "recommended_priority_actions": [],
+        "estimated_remediation_effort": "Low",
+        "executive_summary": "Summary.",
+    },
+    "warnings": ["model supplied warning"],
+}
+
+
+class TestJurisdictionWarning(unittest.TestCase):
+    PYTHON = TestCliDryRun.PYTHON
+    CLI = TestCliDryRun.CLI
+
+    def _agent(self):
+        agent = ComplianceAgent.__new__(ComplianceAgent)
+        agent._call_claude = lambda *a, **k: json.dumps(_MINIMAL_REPORT)
+        return agent
+
+    def test_warning_none_for_supported(self):
+        for country in ["US", "Germany", "UK", "Australia", "Singapore"]:
+            with self.subTest(country=country):
+                self.assertIsNone(jurisdiction_warning(country))
+
+    def test_warning_for_unknown(self):
+        self.assertIn("Brazil", jurisdiction_warning("Brazil"))
+
+    def test_agent_logs_and_sets_report_warning(self):
+        with self.assertLogs("saaf.agent", level="WARNING") as cm:
+            report, _ = self._agent().run(_make_input(country="Brazil"))
+        self.assertTrue(any("Brazil" in m for m in cm.output))
+        self.assertEqual(report.warnings, [jurisdiction_warning("Brazil")])
+
+    def test_agent_overrides_model_supplied_warnings(self):
+        report, _ = self._agent().run(_make_input(country="US"))
+        self.assertEqual(report.warnings, [])
+
+    def test_warnings_not_in_model_schema(self):
+        self.assertNotIn('"warnings"', build_system_prompt(
+            _make_input(), FrameworkMapper(_make_input()).map()))
+
+    def test_formatter_renders_warning(self):
+        from rich.console import Console
+        from saaf.output import formatter
+        report, _ = self._agent().run(_make_input(country="Brazil"))
+        console = Console(record=True, width=120)
+        with patch.object(formatter, "console", console):
+            formatter.render_report(report)
+        self.assertIn("not recognised", console.export_text())
+
+    def test_cli_dry_run_warns_on_stderr(self):
+        result = subprocess.run(
+            [self.PYTHON, self.CLI, "--company", "X", "--industry", "Healthcare",
+             "--country", "Brazil", "--listed-status", "Private",
+             "--audit-topic", "Cybersecurity", "--dry-run"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("not recognised", result.stderr)
+
+    def test_cli_no_warning_for_supported(self):
+        result = subprocess.run(
+            [self.PYTHON, self.CLI, "--company", "X", "--industry", "Healthcare",
+             "--country", "US", "--listed-status", "Private",
+             "--audit-topic", "Cybersecurity", "--dry-run"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+        )
+        self.assertNotIn("not recognised", result.stderr)
 
 
 # ---------------------------------------------------------------------------

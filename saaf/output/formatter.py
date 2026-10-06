@@ -74,6 +74,11 @@ def render_report(
     console.print(f"  Generated: [dim]{report.generated_at}[/dim]")
     console.print()
 
+    for warning in report.warnings:
+        console.print(Panel(f"[yellow]{warning}[/yellow]", title="[bold yellow]Warning[/bold yellow]",
+                            border_style="yellow", padding=(0, 2)))
+        console.print()
+
     # ── Overall risk ──────────────────────────────────────────────────────
     summary = report.gap_risk_summary
     overall_colour = _RISK_COLOUR.get(summary.overall_risk_rating, "white")
