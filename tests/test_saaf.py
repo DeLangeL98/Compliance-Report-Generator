@@ -399,6 +399,18 @@ class TestJsonExtraction(unittest.TestCase):
         )
 
 
+class TestClientTimeout(unittest.TestCase):
+    """Config.timeout_seconds must be passed to the Anthropic client."""
+
+    def test_timeout_passed_to_client(self) -> None:
+        config = Config()
+        config.timeout_seconds = 42
+        with patch("saaf.core.agent.anthropic.Anthropic") as mock_client:
+            ComplianceAgent(config)
+        mock_client.assert_called_once()
+        self.assertEqual(mock_client.call_args.kwargs["timeout"], 42)
+
+
 # ---------------------------------------------------------------------------
 # Test 7 — CLI dry-run (end-to-end without API)
 # ---------------------------------------------------------------------------

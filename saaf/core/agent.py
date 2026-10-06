@@ -31,7 +31,10 @@ class ComplianceReportError(Exception):
 class ComplianceAgent:
     def __init__(self, config: Config | None = None) -> None:
         self.config = config or Config()
-        self.client = anthropic.Anthropic(api_key=self.config.api_key)
+        self.client = anthropic.Anthropic(
+            api_key=self.config.api_key,
+            timeout=self.config.timeout_seconds,
+        )
 
     # ------------------------------------------------------------------
     # Public entry point
