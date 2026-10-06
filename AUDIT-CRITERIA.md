@@ -54,7 +54,7 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 
 **CO-3 — Decision support, not conclusions**
 - Given any successful run, the rendered report and the JSON both contain the disclaimer text.
-- Given a model response that omits or rewrites `disclaimer`, the output still carries the standard disclaimer. **Limitation, stated honestly:** not guaranteed today. `disclaimer` is a model field with a default, so a model-supplied value would override it.
+- Given a model response that omits or rewrites `disclaimer`, the output still carries the standard disclaimer. `disclaimer` is excluded from the model-facing schema and forced to `DISCLAIMER` (`saaf/core/models.py`) after validation in `_parse_and_validate`.
 - Given any run, the report does not state that the entity is compliant or non-compliant. **Limitation, stated honestly:** only enforced by prompt wording ("typical gaps for this profile"), not by a check.
 
 **CO-4 — Data and secrets**
@@ -83,13 +83,12 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 
 - **No post-hoc grounding check.** Model output is not compared with the mapped framework set; the restriction relies on the prompt alone.
 - **Clause references are unverified.** `requirement_source` and `applicable_sections` are model-generated and not checked against any source text, so a plausible but wrong article number can pass validation.
-- **Disclaimer can be overridden** by the model, since it is part of the schema it fills.
 - **Knowledge base is hand-maintained and static.** There is no versioning, no review date per framework, and no process for regulatory change. Boundary cases (e.g. a fintech that may or may not be a credit institution under DORA) are listed as an open question in the plan and are not handled explicitly.
 - **Limited jurisdiction coverage.** The system prompt names US, EU, UK, Australia and Singapore. Other countries resolve to a generic jurisdiction and the output may be thin.
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
 - **Real entity names are sent to a third-party API** with no warning or opt-out.
 - **No persistent audit trail** (see section 7).
-- **Tests are unit-level only.** No test exercises `ComplianceAgent.run` with a mocked or recorded API response, and no test covers a model response with an out-of-scope framework or a rewritten disclaimer. Not evaluated against real model output.
+- **Tests are unit-level only.** No test exercises `ComplianceAgent.run` with a mocked or recorded API response, and no test covers a model response with an out-of-scope framework. Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
 - **Repo ownership.** Plan was submitted on the maintainer's behalf by a colleague; the Check and Act PDCA phases are not started.
 
@@ -106,8 +105,9 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 | CO-2 #3 (schema violation) | ☐ | Candidate: `TestPydanticModels.test_invalid_*_rejected`; agent-level path untested |
 | CO-2 #4 (CLI rejects bad enum) | ☐ | Candidate: `TestCliDryRun.test_invalid_industry_rejected_by_cli` — not yet run |
 | CO-2 #5 (API retry behaviour) | ☐ | No test |
-| CO-3 #1 (disclaimer shown) | ☐ | No test |
-| CO-3 #2–#3 | ☐ | Not implemented |
+| CO-3 #1 (disclaimer shown) | ☑ | `TestDisclaimerNotOverridable.test_disclaimer_in_rendered_report`, `test_disclaimer_in_json_output`; `python -m unittest discover -s tests` passed (53 tests), 2026-10-06 |
+| CO-3 #2 (disclaimer omitted/rewritten) | ☑ | `TestDisclaimerNotOverridable.test_omitted_disclaimer_gets_standard_text`, `test_rewritten_disclaimer_is_replaced`, `test_schema_hides_disclaimer_from_model`; same run |
+| CO-3 #3 (no compliance conclusion) | ☐ | Not implemented (prompt wording only) |
 | CO-4 #1 (missing key) | ☐ | Candidate: `TestCliDryRun.test_dry_run_no_api_key_needed` covers dry-run only |
 | CO-4 #2 (secret scan) | ☑ | Manual grep of tracked files, 2026-10-06, no matches |
 | CO-4 #3 | ☐ | Known limitation |
