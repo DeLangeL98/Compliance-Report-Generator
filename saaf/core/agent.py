@@ -1,5 +1,5 @@
 """
-Compliance agent — orchestrates the mapper → prompt builder → Claude API → validator pipeline.
+Compliance agent — orchestrates the mapper → prompt builder → LLM API → validator pipeline.
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ import re
 import time
 from typing import Optional
 
-import anthropic
 from pydantic import ValidationError
 
 from config import Config
-from saaf.core.audit_trail import AuditTrail, utc_now
+from saaf.core.audit_trail import AuditTrail, sanitize_endpoint, utc_now
+from saaf.core.llm import LLMError, create_client
 from saaf.core.mapper import FrameworkMapper, FrameworkMatch, MappingResult
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
@@ -59,12 +59,12 @@ class ComplianceAgent:
     # Optional opt-in audit trail (see saaf/core/audit_trail.py); off by default.
     audit_trail: Optional[AuditTrail] = None
 
+    # Outcome of the most recent model call (attempts, token usage, stop reason)
+    _last_call: dict = {}
+
     def __init__(self, config: Config | None = None) -> None:
         self.config = config or Config()
-        self.client = anthropic.Anthropic(
-            api_key=self.config.api_key,
-            timeout=self.config.timeout_seconds,
-        )
+        self.client = create_client(self.config)
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -100,9 +100,10 @@ class ComplianceAgent:
         log.debug("Prompt sizes: system=%d chars  user=%d chars",
                   len(system_prompt), len(user_message))
 
-        # Step 3: Call Claude with streaming + adaptive thinking
+        # Step 3: Call the configured model
         started_at = utc_now()
-        raw_json = self._call_claude(system_prompt, user_message)
+        self._last_call = {}
+        raw_json = self._call_llm(system_prompt, user_message)
 
         # Step 4: Parse and validate
         report = self._parse_and_validate(raw_json, audit_input)
@@ -117,7 +118,16 @@ class ComplianceAgent:
                 report_id=report.report_id,
                 inputs=audit_input.model_dump(),
                 framework_keys=[m.key for m in mapping.framework_matches],
+                provider=self.config.provider,
                 model=self.config.model,
+                endpoint=getattr(self.client, "endpoint", None),
+                settings={
+                    "max_tokens": self.config.max_tokens,
+                    "max_retries": self.config.max_retries,
+                    "timeout_seconds": self.config.timeout_seconds,
+                },
+                kb_version=KB_VERSION,
+                call=self._last_call,
                 system_prompt=system_prompt,
                 user_message=user_message,
                 started_at=started_at,
@@ -142,80 +152,51 @@ class ComplianceAgent:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _call_claude(self, system_prompt: str, user_message: str) -> str:
-        """Call Claude API with streaming and adaptive thinking. Retry once on failure."""
-        last_error: Exception | None = None
+    def _call_llm(self, system_prompt: str, user_message: str) -> str:
+        """Call the configured model, retrying transient (5xx / connection) failures."""
+        last_error: Optional[Exception] = None
 
         for attempt in range(self.config.max_retries + 1):
             if attempt:
                 log.warning("Retrying API call (attempt %d/%d)", attempt + 1, self.config.max_retries + 1)
+
+            _, endpoint_host = sanitize_endpoint(getattr(self.client, "endpoint", None))
+            log.info("Calling %s (provider=%s host=%s)  max_tokens=%d",
+                     self.config.model, self.config.provider, endpoint_host,
+                     self.config.max_tokens)
+            t_start = time.monotonic()
             try:
-                full_text = ""
-                t_start = time.monotonic()
-                thinking_tokens = 0
-
-                log.info("Calling %s  max_tokens=%d  thinking=adaptive",
-                         self.config.model, self.config.max_tokens)
-
-                with self.client.messages.stream(
-                    model=self.config.model,
-                    max_tokens=self.config.max_tokens,
-                    thinking={"type": "adaptive"},
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_message}],
-                ) as stream:
-                    current_block_type: str | None = None
-
-                    for event in stream:
-                        if event.type == "content_block_start":
-                            current_block_type = getattr(event.content_block, "type", None)
-                            if current_block_type == "thinking":
-                                log.debug("Thinking block started")
-                            elif current_block_type == "text":
-                                log.debug("Text block started")
-
-                        elif (
-                            event.type == "content_block_delta"
-                            and hasattr(event.delta, "type")
-                        ):
-                            if event.delta.type == "text_delta":
-                                full_text += event.delta.text
-                            elif event.delta.type == "thinking_delta":
-                                thinking_tokens += len(event.delta.thinking)
-
-                    final = stream.get_final_message()
-
-                elapsed = time.monotonic() - t_start
-                usage = final.usage
-                log.info("API done in %.1fs  input=%d  output=%d  stop=%s",
-                         elapsed, usage.input_tokens, usage.output_tokens, final.stop_reason)
-                if thinking_tokens:
-                    log.debug("Thinking block: ~%d chars", thinking_tokens)
-
-                text_blocks = [b.text for b in final.content if b.type == "text"]
-                if text_blocks:
-                    return text_blocks[-1]
-                return full_text
-
-            except anthropic.APIStatusError as e:
+                response = self.client.complete(
+                    system_prompt, user_message, self.config.max_tokens
+                )
+            except LLMError as e:
                 last_error = e
-                log.error("API error %d: %s", e.status_code, e.message)
-                if e.status_code < 500:
-                    raise ComplianceReportError(
-                        f"Claude API error ({e.status_code}): {e.message}"
-                    ) from e
-            except anthropic.APIConnectionError as e:
-                last_error = e
-                log.error("Connection error: %s", e)
+                log.error("API error%s: %s",
+                          f" {e.status_code}" if e.status_code else "", e)
+                if not e.retryable:
+                    status = f" ({e.status_code})" if e.status_code else ""
+                    raise ComplianceReportError(f"LLM API error{status}: {e}") from e
+                continue
+
+            log.info("API done in %.1fs  input=%s  output=%s  stop=%s",
+                     time.monotonic() - t_start, response.input_tokens,
+                     response.output_tokens, response.stop_reason)
+            self._last_call = {
+                "attempts": attempt + 1,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "stop_reason": response.stop_reason,
+            }
+            return response.text
 
         raise ComplianceReportError(
-            f"Claude API failed after {self.config.max_retries + 1} attempts: {last_error}"
+            f"LLM API failed after {self.config.max_retries + 1} attempts: {last_error}"
         )
 
     def _parse_and_validate(
         self, raw_json: str, audit_input: AuditInput
     ) -> ComplianceReport:
-        """Extract JSON from Claude's response, parse, and validate."""
+        """Extract JSON from the model's response, parse, and validate."""
         log.debug("Raw response: %d chars", len(raw_json))
         cleaned = self._extract_json_object(raw_json)
         if len(cleaned) != len(raw_json):
@@ -227,7 +208,7 @@ class ComplianceAgent:
         except json.JSONDecodeError as e:
             log.error("JSON parse failed at char %d: %s", e.pos, e.msg)
             raise ComplianceReportError(
-                f"Claude returned invalid JSON: {e}",
+                f"Model returned invalid JSON: {e}",
                 raw_response=raw_json,
             ) from e
 
@@ -283,7 +264,7 @@ class ComplianceAgent:
     @staticmethod
     def _extract_json_object(text: str) -> str:
         """
-        Robustly extract the outermost JSON object from Claude's response.
+        Robustly extract the outermost JSON object from the model's response.
 
         Handles:
           - Clean JSON with no surrounding text

@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from config import Config
+from saaf.core.llm import PROVIDERS
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
 from saaf.core.audit_trail import AuditTrail
 from saaf.core.models import AuditInput, AuditTopic, Industry, ListedStatus
@@ -29,7 +30,7 @@ err_console = Console(stderr=True)
 DEFAULT_ALIAS = "Entity A"
 
 DATA_FLOW_WARNING = (
-    "[yellow]Warning:[/yellow] company_name is sent verbatim to Anthropic's API. "
+    "[yellow]Warning:[/yellow] company_name is sent verbatim to the configured LLM API. "
     "Use a synthetic name, or --anonymise / --alias NAME to send a placeholder. "
     "Suppress this notice with --yes."
 )
@@ -154,6 +155,15 @@ Examples:
                         help="Opt-in: write a per-run JSON record (<report_id>.json) to this directory")
     parser.add_argument("--audit-trail-include-company", action="store_true",
                         help="Keep company name in the audit trail (redacted by default)")
+    # Model / endpoint selection (each also has an environment variable; see config.py)
+    parser.add_argument("--provider", choices=list(PROVIDERS),
+                        help="LLM provider: 'anthropic' (default) or 'openai' for any "
+                             "OpenAI-compatible API (env: SAAF_PROVIDER)")
+    parser.add_argument("--model",
+                        help="Model name (env: SAAF_MODEL; default claude-opus-4-6 for anthropic)")
+    parser.add_argument("--base-url", dest="base_url",
+                        help="Custom API endpoint, e.g. http://localhost:11434/v1 "
+                             "(env: SAAF_BASE_URL)")
     parser.add_argument("--log-level", dest="log_level",
                         choices=["debug", "info", "warning", "error"], default="info",
                         help="Logging verbosity (default: info)")
@@ -228,7 +238,11 @@ def main() -> int:
 
     # Run the agent
     try:
-        config = Config()
+        config = Config(
+            provider=args.provider or "",
+            model=args.model or "",
+            base_url=args.base_url or "",
+        )
     except EnvironmentError as e:
         err_console.print(f"[red]Configuration error:[/red] {e}")
         return 1

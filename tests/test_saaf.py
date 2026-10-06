@@ -383,9 +383,9 @@ class TestGroundingCheck(unittest.TestCase):
     def test_run_rejects_out_of_scope_framework_end_to_end(self):
         payload = self._report(["Totally Invented Act 2031"], []).model_dump_json()
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test"}), \
-                patch("saaf.core.agent.anthropic.Anthropic"):
+                patch("saaf.core.agent.create_client"):
             agent = ComplianceAgent(Config())
-        with patch.object(agent, "_call_claude", return_value=payload):
+        with patch.object(agent, "_call_llm", return_value=payload):
             with self.assertRaises(ComplianceReportError) as ctx:
                 agent.run(_make_input())
         self.assertEqual(ctx.exception.raw_response, payload)
@@ -466,7 +466,7 @@ class TestClientTimeout(unittest.TestCase):
     def test_timeout_passed_to_client(self) -> None:
         config = Config()
         config.timeout_seconds = 42
-        with patch("saaf.core.agent.anthropic.Anthropic") as mock_client:
+        with patch("anthropic.Anthropic") as mock_client:
             ComplianceAgent(config)
         mock_client.assert_called_once()
         self.assertEqual(mock_client.call_args.kwargs["timeout"], 42)
@@ -716,10 +716,10 @@ class TestEntityNameDataFlow(unittest.TestCase):
     def test_real_name_not_logged_when_anonymised(self):
         """The agent logs the input it receives; with an alias that is never the real name."""
         import cli
-        with patch("saaf.core.agent.anthropic.Anthropic"):
+        with patch("saaf.core.agent.create_client"):
             agent = ComplianceAgent(MagicMock())
         sent = cli.apply_alias(_make_input(company_name=self.REAL), "Entity A")
-        with patch.object(agent, "_call_claude", side_effect=RuntimeError("stop")), \
+        with patch.object(agent, "_call_llm", side_effect=RuntimeError("stop")), \
              self.assertLogs("saaf.agent", level="DEBUG") as cm:
             with self.assertRaises(RuntimeError):
                 agent.run(sent)
@@ -752,7 +752,7 @@ class TestJurisdictionWarning(unittest.TestCase):
 
     def _agent(self):
         agent = ComplianceAgent.__new__(ComplianceAgent)
-        agent._call_claude = lambda *a, **k: json.dumps(_MINIMAL_REPORT)
+        agent._call_llm = lambda *a, **k: json.dumps(_MINIMAL_REPORT)
         return agent
 
     def test_warning_none_for_supported(self):

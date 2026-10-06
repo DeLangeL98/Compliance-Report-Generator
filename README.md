@@ -31,17 +31,46 @@ python cli.py ... --output json
 python cli.py ... --output findings
 ```
 
-Requires `ANTHROPIC_API_KEY` set in the environment.
+### Choosing a model or endpoint
+
+The agent is not tied to one model. Two providers are built in:
+
+| Provider | Use for | Key |
+|---|---|---|
+| `anthropic` (default) | Anthropic Messages API (default model `claude-opus-4-6`, adaptive thinking) | `ANTHROPIC_API_KEY` |
+| `openai` | Any OpenAI-compatible `/chat/completions` API: OpenAI, Azure-style gateways, vLLM, Ollama, LiteLLM, LM Studio | `OPENAI_API_KEY` (optional when `--base-url` is set) |
+
+```bash
+# Default: Anthropic, key from ANTHROPIC_API_KEY
+python cli.py ...
+
+# Local model via Ollama (no key needed)
+python cli.py ... --provider openai --model llama3.1 --base-url http://localhost:11434/v1
+
+# Hosted OpenAI-compatible gateway
+export OPENAI_API_KEY=...
+python cli.py ... --provider openai --model my-model --base-url https://llm.example.com/v1
+
+# Anthropic through a proxy / gateway
+python cli.py ... --base-url https://gateway.example.com/anthropic
+```
+
+Each setting can also come from the environment, with precedence **flag > environment > default**: `SAAF_PROVIDER`, `SAAF_MODEL`, `SAAF_BASE_URL`, and `SAAF_API_KEY` (overrides the provider-specific key variable). `--base-url` takes either a base URL (`.../v1`) or the full `.../chat/completions` URL.
+
+Notes:
+- The company name and engagement details are sent to whatever endpoint you configure (see `--anonymise`). Plain `http://` to a non-local host logs a warning, since the key and data would travel unencrypted. Redirects are never followed, so the key cannot be forwarded to another host.
+- Output quality, JSON compliance and clause accuracy vary by model. Every response is validated against the same schema and grounding checks regardless of provider; only `claude-opus-4-6` has been used so far.
+- The openai provider sends `max_tokens` and no provider-specific options (no streaming, no thinking mode).
 
 ### Audit trail (opt-in)
 
-`--audit-trail-dir DIR` writes `DIR/<report_id>.json` per successful run (inputs, framework keys, model, SHA-256 of the prompts, timestamps, raw model response). Off by default. The company name is redacted unless `--audit-trail-include-company` is given; the raw response is stored verbatim and may still mention it.
+`--audit-trail-dir DIR` writes `DIR/<report_id>.json` per successful run (inputs, framework keys, provider, model, endpoint host and sanitised URL, call settings, knowledge-base version, attempts, token usage, stop reason, SHA-256 of the prompts, timestamps, raw model response). The endpoint is stored without credentials, query string or fragment. Off by default. The company name is redacted unless `--audit-trail-include-company` is given; the raw response is stored verbatim and may still mention it.
 
 ## What it does
 
 1. **Deterministic mapping** — resolves the entity's jurisdiction, industry, and listed status against a knowledge base of 30+ frameworks (DORA, NIS2, GDPR, ISO 27001, SOX, HIPAA, and more) with no API call needed (`saaf/core/mapper.py`, `saaf/knowledge/`).
 2. **Dynamic prompt construction** — builds a system prompt containing only the selected frameworks, reducing hallucination (`saaf/prompts/system_prompt.py`).
-3. **Claude API call** — sends the engagement details to Claude (`claude-opus-4-6`) with adaptive thinking enabled and retries on transient errors (`saaf/core/agent.py`).
+3. **LLM call** — sends the engagement details to the configured model (default Claude `claude-opus-4-6` with adaptive thinking; any OpenAI-compatible endpoint is supported) and retries on transient errors (`saaf/core/agent.py`, `saaf/core/llm/`, one module per provider).
 4. **Validation and rendering** — validates the JSON response against Pydantic models and renders a rich terminal report with control objectives, gap analysis, and priority actions (`saaf/core/models.py`, `saaf/output/formatter.py`).
 
 ## Input / output
@@ -51,7 +80,7 @@ Requires `ANTHROPIC_API_KEY` set in the environment.
 
 ## Data flow
 
-Only the five engagement fields (company name, industry, country, listed status, audit topic) are sent to Anthropic's API, together with a system prompt built from the mapped frameworks. `--dry-run` sends nothing.
+Only the five engagement fields (company name, industry, country, listed status, audit topic) are sent to the configured model endpoint (Anthropic's API by default), together with a system prompt built from the mapped frameworks. `--dry-run` sends nothing.
 
 - `company_name` is sent **verbatim**. A real (non-dry-run) call prints a warning on stderr; it does not prompt or block. Suppress it with `--yes` (alias `--no-warn`) in non-interactive use.
 - `--anonymise` (or `--alias NAME`, which implies it) sends a placeholder (default `Entity A`) instead. The real name stays on your machine, and logs show only the alias. The `audit_input` in the report shown or saved locally has the real name restored, so treat that output as sensitive. Industry, country, listed status and audit topic are still sent.

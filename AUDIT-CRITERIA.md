@@ -20,7 +20,7 @@
 
 ## 1. What the agent does
 
-Given an engagement profile (company name, industry, country, listed status, audit topic), the agent deterministically maps the entity to applicable regulatory frameworks from a built-in knowledge base (30+ frameworks), then asks Claude (`claude-opus-4-6`, adaptive thinking) to produce a structured compliance overview: mandatory regulations, per-framework control objectives with testing approaches, typical gaps, and a prioritised action summary. Output is validated against Pydantic models and rendered as a terminal report or JSON. It supports the **planning phase** of an audit engagement (regulatory scoping); it does not assess the entity's actual compliance.
+Given an engagement profile (company name, industry, country, listed status, audit topic), the agent deterministically maps the entity to applicable regulatory frameworks from a built-in knowledge base (30+ frameworks), then asks an LLM (default Claude `claude-opus-4-6` with adaptive thinking; any OpenAI-compatible endpoint can be configured with `--provider` / `--model` / `--base-url`) to produce a structured compliance overview: mandatory regulations, per-framework control objectives with testing approaches, typical gaps, and a prioritised action summary. Output is validated against Pydantic models and rendered as a terminal report or JSON. It supports the **planning phase** of an audit engagement (regulatory scoping); it does not assess the entity's actual compliance.
 
 The agent makes LLM calls at runtime, so AI-specific frameworks (EU AI Act, OWASP LLM) are in scope below.
 
@@ -33,8 +33,8 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 | CO-1 — Framework scoping is grounded: every framework in the output comes from the deterministic knowledge base, and the model cannot introduce frameworks of its own. | OWASP LLM Top 10 — LLM09 Overreliance / LLM01 Prompt Injection (constrained output scope); EU AI Act Art. 15 (accuracy, robustness) | The core risk of this agent is a plausible but invented regulation or clause reaching an audit plan. |
 | CO-2 — Output is structurally valid and complete: malformed or schema-violating model output is rejected, not silently repaired or passed on. | EU AI Act Art. 15; COBIT 2019 DSS06 (manage business process controls) | Auditors consume the JSON downstream; invalid output must fail loudly. |
 | CO-3 — Output is positioned as decision support: a human-review disclaimer always accompanies the report, and model-generated content is not presented as legal or audit-ready conclusions. | EU AI Act Art. 14 (human oversight) & Art. 13 (transparency); IIA Standard 2310 / 1220 (due professional care, reliance on evidence) | Output is generic to a profile and not tested against real entity evidence. |
-| CO-4 — Engagement data and secrets are handled safely: API key only from the environment, and no real entity data is needed to use the agent. | GDPR Art. 5(1)(c) & 32 (minimisation, security); ISO 27001 Annex A 5.17 / 8.24; OWASP LLM06 Sensitive Information Disclosure | Company name and profile are sent to a third-party API. |
-| CO-5 — Runs are traceable and reproducible enough to review: inputs, selected frameworks, model, and outcome are logged. | EU AI Act Art. 12 (record-keeping); IIA Standard 2330 (documenting information) | A reviewer must be able to see what produced a report. |
+| CO-4 — Engagement data and secrets are handled safely: API key only from the environment, and no real entity data is needed to use the agent. | GDPR Art. 5(1)(c) & 32 (minimisation, security); ISO 27001 Annex A 5.17 / 8.24; OWASP LLM06 Sensitive Information Disclosure | Company name and profile are sent to the configured model endpoint, which may be third-party or self-hosted. |
+| CO-5 — Runs are traceable and reproducible enough to review: inputs, selected frameworks, provider, model, endpoint, and outcome are logged. | EU AI Act Art. 12 (record-keeping); IIA Standard 2330 (documenting information) | A reviewer must be able to see what produced a report. |
 
 ## 3. Acceptance criteria (testable, pass/fail)
 
@@ -59,14 +59,17 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 - Given a country that does not resolve to a known jurisdiction, the CLI prints a warning to stderr (also with `--dry-run`), the agent logs a warning, and the report (terminal and JSON `warnings` field) carries a visible note that coverage is generic. The warning is set by the agent after validation, so a model-supplied `warnings` value is overwritten. **Limitation, stated honestly:** this only signals the gap; coverage was not extended, and Canada, India and Japan resolve to known keys with minimal matrix entries and do not trigger the warning.
 
 **CO-4 — Data and secrets**
-- Given `ANTHROPIC_API_KEY` unset, a real run exits with a clear configuration error. `--dry-run` works without a key.
+- Given the provider's key variable unset (`ANTHROPIC_API_KEY` by default, or `OPENAI_API_KEY` / `SAAF_API_KEY`), a real run exits with a clear configuration error. `--dry-run` works without a key. A key is optional only for the `openai` provider with a custom `--base-url`.
+- Given a `--base-url` that is not http(s), has no host, or embeds credentials, the CLI exits with a configuration error. Given plain `http://` to a non-local host, a warning is logged. Redirects from the endpoint are never followed. **Limitation, stated honestly:** a custom endpoint receives the same engagement data and API key as the default one; the agent cannot vouch for what that endpoint does with them.
 - Given a scan of tracked files, no API keys or credentials are present. A scan found none on 2026-10-06 (patterns `sk-`, `AKIA`, private-key headers, tracked `.env`).
 - Given a run, only the five engagement fields are sent to the API. A real (non-dry-run) call prints a stderr warning that `company_name` is sent verbatim (non-blocking; `--yes` / `--no-warn` suppresses it), and `--anonymise` / `--alias NAME` sends a placeholder instead, with the real name restored only in the locally shown `audit_input` and absent from logs. **Limitation, stated honestly:** anonymisation is opt-in, the default still sends the real name, nothing enforces synthetic names, and the other four fields are still sent.
 
 **CO-5 — Traceability**
 - Given a run at default log level, stderr logs the input profile, mapped jurisdiction and framework keys, model name, API duration, token counts, stop reason, and the resulting `report_id`.
 - Given a JSON output, it includes `report_id`, `generated_at` and the `audit_input`.
-- **Limitation, stated honestly:** logs go to stderr only and are not persisted. The model's own response and the prompt are not stored, so a past run cannot be reconstructed.
+- Given `--audit-trail-dir DIR`, each successful run writes `DIR/<report_id>.json` containing the inputs (company name redacted unless `--audit-trail-include-company`), framework keys, provider, model, endpoint host and sanitised URL, call settings (max tokens, retries, timeout), knowledge-base version, attempts, token usage, stop reason, prompt SHA-256, timestamps and the raw response.
+- Given an endpoint URL containing credentials, a query string or a fragment, the audit record contains none of them.
+- **Limitation, stated honestly:** the audit trail is opt-in and off by default. Without it, logs go to stderr only and nothing is persisted. The prompt itself is stored only as a hash, the raw response is stored verbatim (and may echo the company name), and runs that fail parsing or validation get no record because no `report_id` exists yet. The recorded endpoint is what the client was configured to call; it does not prove which backend served the request (gateways may route to other models).
 
 ## 4. Good output / never do
 
@@ -88,7 +91,7 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 - **Limited jurisdiction coverage (partly mitigated).** The system prompt names US, EU, UK, Australia and Singapore (now documented in the README). Other countries still resolve to a generic jurisdiction and the output may be thin, but the user is now warned in the CLI, log and report (see CO-3). Coverage itself is not extended, and the warning is not shown for Canada, India or Japan, which have only minimal coverage.
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
 - **Real entity names are sent to a third-party API by default.** A warning and an opt-in alias exist (issue #12), but anonymisation is not the default and the alias is not checked for leaking the real name. Real-name restoration in `audit_input` means local output stays sensitive.
-- **No persistent audit trail** (see section 7).
+- **Audit trail is opt-in and partial.** Failed runs are not recorded, and the prompt is stored only as a hash (see section 7).
 - **Tests are mostly unit-level.** `tests/test_agent_run.py` exercises `ComplianceAgent.run` with a mocked client (success, JSON extraction, no-JSON, schema-invalid, 4xx/5xx/connection errors), and grounding and disclaimer tests also use mocked responses. Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
 - **Repo ownership.** Plan was submitted on the maintainer's behalf by a colleague; the Check and Act PDCA phases are not started.
@@ -118,4 +121,4 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 
 ## 7. Observability
 
-Today: Python `logging` (default INFO, configurable with `--log-level`) writes to stderr. It records the input profile, mapped frameworks, model and token settings, API duration, token counts, stop reason, retries and errors, and the report ID. DEBUG adds prompt sizes and parse details. Missing: persistent log storage, storage of the prompt and raw response per `report_id`, and cost tracking. Input includes the company name, which may be sensitive, so persistence would need a redaction decision.
+Today: Python `logging` (default INFO, configurable with `--log-level`) writes to stderr. It records the input profile, mapped frameworks, model and token settings, API duration, token counts, stop reason, retries and errors, and the report ID. DEBUG adds prompt sizes and parse details. Opt-in (`--audit-trail-dir`): a per-run JSON record keyed by `report_id` with provider, model, endpoint host, call settings, knowledge-base version, token usage and the raw response (see CO-5). Missing: records for failed runs, storage of the prompt text, persistent log storage by default, and cost tracking. Input includes the company name, which may be sensitive, so persistence would need a redaction decision.

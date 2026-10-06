@@ -2,7 +2,7 @@
 Deterministic framework mapper — no API calls.
 
 Given an AuditInput, returns the frameworks and regulations in scope.
-This is unit-testable and cheap; it runs before any Claude API call.
+This is unit-testable and cheap; it runs before any LLM API call.
 """
 
 from __future__ import annotations

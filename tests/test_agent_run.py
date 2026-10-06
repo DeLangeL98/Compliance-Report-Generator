@@ -1,5 +1,5 @@
 """
-SAAF — ComplianceAgent.run tests with a mocked Anthropic client (no API calls).
+SAAF — ComplianceAgent.run tests with a mocked LLM client (no API calls).
 
 Run with:
     python -m unittest tests.test_agent_run -v
@@ -11,18 +11,19 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-
-import anthropic
 
 # Ensure project root is on the path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests import endpoints as E
+
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
+from saaf.core.llm import LLMError, LLMResponse
 from saaf.core.models import AuditInput, ComplianceReport
 from config import Config
+from tests.test_llm import _Server, _completion
 
 
 # ---------------------------------------------------------------------------
@@ -54,52 +55,33 @@ def _report_dict() -> dict:
     }
 
 
-def _fake_stream(text: str) -> MagicMock:
-    """Mimic the context manager returned by client.messages.stream()."""
-    event = SimpleNamespace(
-        type="content_block_delta",
-        delta=SimpleNamespace(type="text_delta", text=text),
-    )
-    final = SimpleNamespace(
-        content=[SimpleNamespace(type="text", text=text)],
-        usage=SimpleNamespace(input_tokens=10, output_tokens=20),
-        stop_reason="end_turn",
-    )
-    stream = MagicMock()
-    stream.__iter__.return_value = iter([event])
-    stream.get_final_message.return_value = final
-    cm = MagicMock()
-    cm.__enter__.return_value = stream
-    cm.__exit__.return_value = False
-    return cm
+def _response(text: str) -> LLMResponse:
+    return LLMResponse(text=text, input_tokens=10, output_tokens=20, stop_reason="end_turn")
 
 
-def _status_error(status: int) -> anthropic.APIStatusError:
-    # The SDK only reads status_code, headers and request off the response,
-    # so a MagicMock avoids depending on the HTTP library the SDK uses.
-    response = MagicMock(status_code=status)
-    response.headers = {}
-    return anthropic.APIStatusError(f"error {status}", response=response, body=None)
+def _status_error(status: int) -> LLMError:
+    # Mirrors what the provider clients raise: only 5xx is retryable
+    return LLMError(f"error {status}", status_code=status, retryable=status >= 500)
 
 
-def _connection_error() -> anthropic.APIConnectionError:
-    return anthropic.APIConnectionError(request=MagicMock())
+def _connection_error() -> LLMError:
+    return LLMError("Connection error", retryable=True)
 
 
 class _AgentTestCase(unittest.TestCase):
-    """Builds a ComplianceAgent whose Anthropic client is a mock."""
+    """Builds a ComplianceAgent whose LLM client is a mock (provider-independent)."""
 
     def setUp(self):
         env = patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
         env.start()
         self.addCleanup(env.stop)
-        client_cls = patch("saaf.core.agent.anthropic.Anthropic")
-        self.client = client_cls.start().return_value
-        self.addCleanup(client_cls.stop)
+        factory = patch("saaf.core.agent.create_client")
+        self.client = factory.start().return_value
+        self.addCleanup(factory.stop)
         self.agent = ComplianceAgent(Config())
 
     def _respond_with(self, text: str):
-        self.client.messages.stream.side_effect = lambda **kw: _fake_stream(text)
+        self.client.complete.side_effect = lambda *a, **kw: _response(text)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +98,7 @@ class TestAgentRunSuccess(_AgentTestCase):
         self.assertEqual(report.audit_input.company_name, "Test Corp")
         self.assertTrue(report.disclaimer)
         self.assertIn("HIPAA", [m.key for m in mapping.framework_matches])
-        self.assertEqual(self.client.messages.stream.call_count, 1)
+        self.assertEqual(self.client.complete.call_count, 1)
 
     def test_markdown_fenced_json_is_extracted(self):
         self._respond_with("```json\n" + json.dumps(_report_dict()) + "\n```")
@@ -131,6 +113,58 @@ class TestAgentRunSuccess(_AgentTestCase):
         )
         report, _ = self.agent.run(_make_input())
         self.assertEqual(report.gap_risk_summary.critical_gaps, ["Gap A"])
+
+
+# ---------------------------------------------------------------------------
+# Audit trail records which provider / endpoint produced a report
+# ---------------------------------------------------------------------------
+
+class TestAgentAuditTrailMetadata(_AgentTestCase):
+
+    def test_record_names_provider_endpoint_settings_and_call_outcome(self):
+        import tempfile
+        from saaf.core.audit_trail import AuditTrail
+        self.client.endpoint = E.ENDPOINT_WITH_QUERY_SECRET
+        self.client.complete.side_effect = [
+            _status_error(503),
+            _response(json.dumps(_report_dict())),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            self.agent.audit_trail = AuditTrail(Path(d))
+            report, _ = self.agent.run(_make_input())
+            text = (Path(d) / f"{report.report_id}.json").read_text(encoding="utf-8")
+        record = json.loads(text)
+
+        self.assertEqual(record["provider"], self.agent.config.provider)
+        self.assertEqual(record["model"], self.agent.config.model)
+        self.assertEqual(record["endpoint_host"], E.HOSTED_HOST)
+        self.assertNotIn("SECRET", text)
+        self.assertEqual(record["settings"]["max_tokens"], self.agent.config.max_tokens)
+        self.assertTrue(record["kb_version"])
+        self.assertEqual(record["call"]["attempts"], 2)
+        self.assertEqual(record["call"]["input_tokens"], 10)
+        self.assertEqual(record["call"]["stop_reason"], "end_turn")
+
+
+# ---------------------------------------------------------------------------
+# Provider-independence: the whole agent against a custom OpenAI-compatible endpoint
+# ---------------------------------------------------------------------------
+
+class TestAgentCustomEndpoint(unittest.TestCase):
+
+    def test_agent_runs_end_to_end_against_custom_endpoint(self):
+        server = _Server(body=_completion(json.dumps(_report_dict())))
+        self.addCleanup(server.close)
+        with patch.dict("os.environ", {}, clear=True):
+            config = Config(provider="openai", model="local-model", base_url=server.url + "/v1")
+        report, _ = ComplianceAgent(config).run(_make_input())
+
+        self.assertEqual(report.gap_risk_summary.critical_gaps, ["Gap A"])
+        path, headers, body = server.requests[0]
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(body["model"], "local-model")
+        self.assertNotIn("Authorization", headers)  # no key configured
+        self.assertIn("Test Corp", body["messages"][1]["content"])
 
 
 # ---------------------------------------------------------------------------
@@ -165,37 +199,37 @@ class TestAgentRunApiErrors(_AgentTestCase):
     # The agent does not sleep between retries, so nothing needs patching.
 
     def test_4xx_fails_immediately_without_retry(self):
-        self.client.messages.stream.side_effect = _status_error(400)
+        self.client.complete.side_effect = _status_error(400)
         with self.assertRaises(ComplianceReportError) as ctx:
             self.agent.run(_make_input())
         self.assertIn("400", str(ctx.exception))
-        self.assertEqual(self.client.messages.stream.call_count, 1)
+        self.assertEqual(self.client.complete.call_count, 1)
 
     def test_5xx_retries_max_retries_then_fails(self):
-        self.client.messages.stream.side_effect = _status_error(503)
+        self.client.complete.side_effect = _status_error(503)
         with self.assertRaises(ComplianceReportError) as ctx:
             self.agent.run(_make_input())
         expected = self.agent.config.max_retries + 1
-        self.assertEqual(self.client.messages.stream.call_count, expected)
+        self.assertEqual(self.client.complete.call_count, expected)
         self.assertIn(f"{expected} attempts", str(ctx.exception))
 
     def test_connection_error_retries_max_retries_then_fails(self):
-        self.client.messages.stream.side_effect = _connection_error()
+        self.client.complete.side_effect = _connection_error()
         with self.assertRaises(ComplianceReportError):
             self.agent.run(_make_input())
         self.assertEqual(
-            self.client.messages.stream.call_count,
+            self.client.complete.call_count,
             self.agent.config.max_retries + 1,
         )
 
     def test_transient_5xx_then_success_returns_report(self):
-        self.client.messages.stream.side_effect = [
+        self.client.complete.side_effect = [
             _status_error(500),
-            _fake_stream(json.dumps(_report_dict())),
+            _response(json.dumps(_report_dict())),
         ]
         report, _ = self.agent.run(_make_input())
         self.assertIsInstance(report, ComplianceReport)
-        self.assertEqual(self.client.messages.stream.call_count, 2)
+        self.assertEqual(self.client.complete.call_count, 2)
 
 
 if __name__ == "__main__":
