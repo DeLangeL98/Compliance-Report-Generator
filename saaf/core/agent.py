@@ -8,11 +8,13 @@ import json
 import logging
 import re
 import time
+from typing import Optional
 
 import anthropic
 from pydantic import ValidationError
 
 from config import Config
+from saaf.core.audit_trail import AuditTrail, utc_now
 from saaf.core.mapper import FrameworkMapper, MappingResult
 from saaf.core.models import AuditInput, ComplianceReport
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
@@ -29,6 +31,9 @@ class ComplianceReportError(Exception):
 
 
 class ComplianceAgent:
+    # Optional opt-in audit trail (see saaf/core/audit_trail.py); off by default.
+    audit_trail: Optional[AuditTrail] = None
+
     def __init__(self, config: Config | None = None) -> None:
         self.config = config or Config()
         self.client = anthropic.Anthropic(
@@ -65,10 +70,23 @@ class ComplianceAgent:
                   len(system_prompt), len(user_message))
 
         # Step 3: Call Claude with streaming + adaptive thinking
+        started_at = utc_now()
         raw_json = self._call_claude(system_prompt, user_message)
 
         # Step 4: Parse and validate
         report = self._parse_and_validate(raw_json, audit_input)
+        if self.audit_trail is not None:
+            self.audit_trail.record(
+                report_id=report.report_id,
+                inputs=audit_input.model_dump(),
+                framework_keys=[m.key for m in mapping.framework_matches],
+                model=self.config.model,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                started_at=started_at,
+                finished_at=utc_now(),
+                raw_response=raw_json,
+            )
         log.info("Report ready: id=%s  risk=%s  frameworks=%d  regulations=%d",
                  report.report_id,
                  report.gap_risk_summary.overall_risk_rating,
