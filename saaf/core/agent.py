@@ -17,6 +17,7 @@ from config import Config
 from saaf.core.audit_trail import AuditTrail, utc_now
 from saaf.core.mapper import FrameworkMapper, MappingResult
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
+from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
 from saaf.knowledge.frameworks import KB_VERSION
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 
@@ -95,6 +96,12 @@ class ComplianceAgent:
                  report.gap_risk_summary.overall_risk_rating,
                  len(report.framework_assessments),
                  len(report.mandatory_regulations))
+
+        # Step 5: Heuristic reference check (does not verify clause text)
+        log.warning(UNVERIFIED_NOTE)
+        for s in find_suspect_references(report, mapping):
+            log.warning("Suspect reference [%s %s]: %r (%s)",
+                        s.location, s.field, s.reference, s.reason)
 
         return report, mapping
 
