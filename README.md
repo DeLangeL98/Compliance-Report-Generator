@@ -29,6 +29,10 @@ python cli.py ... --output json
 
 Requires `ANTHROPIC_API_KEY` set in the environment.
 
+### Audit trail (opt-in)
+
+`--audit-trail-dir DIR` writes `DIR/<report_id>.json` per successful run (inputs, framework keys, model, SHA-256 of the prompts, timestamps, raw model response). Off by default. The company name is redacted unless `--audit-trail-include-company` is given; the raw response is stored verbatim and may still mention it.
+
 ## What it does
 
 1. **Deterministic mapping** — resolves the entity's jurisdiction, industry, and listed status against a knowledge base of 30+ frameworks (DORA, NIS2, GDPR, ISO 27001, SOX, HIPAA, and more) with no API call needed (`saaf/core/mapper.py`, `saaf/knowledge/`).

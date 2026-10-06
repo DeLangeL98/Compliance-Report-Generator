@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 from typing import get_args
 
 from rich.console import Console
@@ -17,6 +18,7 @@ from rich.prompt import Prompt
 
 from config import Config
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
+from saaf.core.audit_trail import AuditTrail
 from saaf.core.models import AuditInput, AuditTopic, Industry, ListedStatus
 from saaf.output.formatter import render_report
 
@@ -119,6 +121,10 @@ Examples:
                         help="Show testing approaches for each control (report mode only)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show which frameworks would be selected without calling the API")
+    parser.add_argument("--audit-trail-dir", dest="audit_trail_dir",
+                        help="Opt-in: write a per-run JSON record (<report_id>.json) to this directory")
+    parser.add_argument("--audit-trail-include-company", action="store_true",
+                        help="Keep company name in the audit trail (redacted by default)")
     parser.add_argument("--log-level", dest="log_level",
                         choices=["debug", "info", "warning", "error"], default="info",
                         help="Logging verbosity (default: info)")
@@ -195,6 +201,11 @@ def main() -> int:
         return 1
 
     agent = ComplianceAgent(config)
+    if args.audit_trail_dir:
+        agent.audit_trail = AuditTrail(
+            Path(args.audit_trail_dir),
+            redact_company=not args.audit_trail_include_company,
+        )
 
     console.print("\n[bold]Generating compliance report...[/bold] ", end="")
     console.print("[dim](this may take 30–60 seconds)[/dim]\n")
