@@ -13,6 +13,7 @@ from saaf.core.models import AuditInput
 from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
 from saaf.knowledge.regulations import (
     REGULATORY_MATRIX,
+    normalise_country,
     normalise_jurisdiction,
 )
 
@@ -40,6 +41,8 @@ class FrameworkMapper:
     def __init__(self, audit_input: AuditInput) -> None:
         self.input = audit_input
         self.jurisdiction = normalise_jurisdiction(audit_input.country)
+        # Country key for national rules (e.g. NL); None when no national rule set exists
+        self.country = normalise_country(audit_input.country)
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -140,14 +143,20 @@ class FrameworkMapper:
             extraterritorial = fw.get("extraterritorial", False)
 
             if fw_jurisdictions:
-                jurisdiction_match = self.jurisdiction in fw_jurisdictions
+                # The jurisdiction group (e.g. EU) or the country (e.g. NL) may match
+                matched_scope = next(
+                    (k for k in (self.jurisdiction, self.country)
+                     if k and k in fw_jurisdictions),
+                    None,
+                )
+                jurisdiction_match = matched_scope is not None
                 if not jurisdiction_match and extraterritorial:
                     jurisdiction_match = True
                     rationale_parts.append("Extraterritorial reach (may apply if handling data of residents in that jurisdiction)")
                 if not jurisdiction_match and fw_key not in reg_keys:
                     continue
                 elif jurisdiction_match:
-                    rationale_parts.append(f"Applicable in jurisdiction '{self.jurisdiction}'")
+                    rationale_parts.append(f"Applicable in jurisdiction '{matched_scope}'")
 
             # 5. Regulatory matrix override
             if fw_key in reg_keys:

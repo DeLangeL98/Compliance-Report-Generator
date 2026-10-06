@@ -68,10 +68,14 @@ Notes:
 
 ## What it does
 
-1. **Deterministic mapping** — resolves the entity's jurisdiction, industry, and listed status against a knowledge base of 30+ frameworks (DORA, NIS2, GDPR, ISO 27001, SOX, HIPAA, and more) with no API call needed (`saaf/core/mapper.py`, `saaf/knowledge/`).
+1. **Deterministic mapping** — resolves the entity's jurisdiction, industry, and listed status against a knowledge base of 30+ frameworks (DORA, NIS2, GDPR, ISO 27001, SOX, HIPAA, BIO2, and more) with no API call needed (`saaf/core/mapper.py`, `saaf/knowledge/`).
 2. **Dynamic prompt construction** — builds a system prompt containing only the selected frameworks, reducing hallucination (`saaf/prompts/system_prompt.py`).
 3. **LLM call** — sends the engagement details to the configured model (default Claude `claude-opus-4-6` with adaptive thinking; any OpenAI-compatible endpoint is supported) and retries on transient errors (`saaf/core/agent.py`, `saaf/core/llm/`, one module per provider).
 4. **Validation and rendering** — validates the JSON response against Pydantic models and renders a rich terminal report with control objectives, gap analysis, and priority actions (`saaf/core/models.py`, `saaf/output/formatter.py`).
+
+### Dutch government (BIO2)
+
+For country `Netherlands` (also `NL`, `The Netherlands`, `Nederland`) with industry `Government`, the mapping adds the **Baseline Informatiebeveiliging Overheid 2 (BIO2)** on security-related topics (Cybersecurity, IT General Controls, Vendor Management, Business Continuity), alongside the EU frameworks that already apply. The entry cites BIO2 v1.3 (Staatscourant 2026, 7416) and its ISO 27001/27002 structure only; it does not enumerate BIO2's government-specific measures, so clause-level references to them are not grounded. See `AUDIT-CRITERIA.md` for the open questions (notably the status for municipalities).
 
 ## Input / output
 
