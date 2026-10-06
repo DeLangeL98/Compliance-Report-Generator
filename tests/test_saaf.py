@@ -20,15 +20,14 @@ from unittest.mock import MagicMock, patch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from config import Config
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
 from saaf.core.mapper import FrameworkMapper
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
-from saaf.output import formatter
 from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY, KB_VERSION
 from saaf.knowledge.regulations import jurisdiction_warning, normalise_jurisdiction
+from saaf.output import formatter
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
-from config import Config
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -271,8 +270,9 @@ class TestFrameworkRegistry(unittest.TestCase):
                                 "Expected at least 20 frameworks in registry")
 
     def test_audit_topics_values_are_valid(self):
-        from saaf.core.models import AuditTopic
         from typing import get_args
+
+        from saaf.core.models import AuditTopic
         valid_topics = set(get_args(AuditTopic)) | {"*"}
         for fw_key, fw in FRAMEWORK_REGISTRY.items():
             for topic in fw.get("audit_topics", []):
@@ -647,6 +647,7 @@ class TestEntityNameDataFlow(unittest.TestCase):
 
     def _main(self, extra: list[str]):
         import io
+
         import cli
         sent: list[AuditInput] = []
 
@@ -689,6 +690,7 @@ class TestEntityNameDataFlow(unittest.TestCase):
 
     def test_dry_run_does_not_warn(self):
         import io
+
         import cli
         err = io.StringIO()
         argv = ["saaf", "--company", self.REAL, "--industry", "Healthcare", "--country", "US",
@@ -779,6 +781,7 @@ class TestJurisdictionWarning(unittest.TestCase):
 
     def test_formatter_renders_warning(self):
         from rich.console import Console
+
         from saaf.output import formatter
         report, _ = self._agent().run(_make_input(country="Brazil"))
         console = Console(record=True, width=120)

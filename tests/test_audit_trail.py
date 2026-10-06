@@ -10,11 +10,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests import endpoints as E
-
 from saaf.core.audit_trail import (
-    RECORD_VERSION, REDACTED, AuditTrail, hash_prompt, sanitize_endpoint, utc_now,
+    RECORD_VERSION,
+    REDACTED,
+    AuditTrail,
+    hash_prompt,
+    sanitize_endpoint,
+    utc_now,
 )
+from tests import endpoints as E
 
 
 def _kwargs(report_id: str = "abc-123") -> dict:

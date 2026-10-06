@@ -17,9 +17,9 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from config import Config
-from saaf.core.llm import PROVIDERS
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
 from saaf.core.audit_trail import AuditTrail
+from saaf.core.llm import PROVIDERS
 from saaf.core.models import AuditInput, AuditTopic, Industry, ListedStatus
 from saaf.knowledge.regulations import jurisdiction_warning
 from saaf.output.formatter import render_references_note, render_report

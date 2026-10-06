@@ -7,7 +7,7 @@ This is unit-testable and cheap; it runs before any LLM API call.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from saaf.core.models import AuditInput
 from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY

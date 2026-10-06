@@ -15,9 +15,8 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests import endpoints as E
-
 from config import Config
+from tests import endpoints as E
 
 
 def _env(**kw):

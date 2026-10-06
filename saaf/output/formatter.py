@@ -4,14 +4,13 @@ Rich-based CLI report renderer.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from rich import box
-from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-
-from typing import Optional
 
 from saaf.core.mapper import MappingResult
 from saaf.core.models import ComplianceReport, ControlObjective
@@ -119,7 +118,7 @@ def render_report(
         risk_colour = _RISK_COLOUR.get(fw.risk_rating, "white")
         fw_header = Text()
         fw_header.append(f"  {fw.framework_name}", style="bold")
-        fw_header.append(f"   Risk: ", style="")
+        fw_header.append("   Risk: ", style="")
         fw_header.append(fw.risk_rating, style=risk_colour)
 
         console.print()

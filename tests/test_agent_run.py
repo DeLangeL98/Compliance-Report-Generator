@@ -11,20 +11,18 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Ensure project root is on the path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests import endpoints as E
-
+from config import Config
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
 from saaf.core.llm import LLMError, LLMResponse
 from saaf.core.models import AuditInput, ComplianceReport
-from config import Config
-from tests.test_llm import _Server, _completion
-
+from tests import endpoints as E
+from tests.test_llm import _completion, _Server
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +121,7 @@ class TestAgentAuditTrailMetadata(_AgentTestCase):
 
     def test_record_names_provider_endpoint_settings_and_call_outcome(self):
         import tempfile
+
         from saaf.core.audit_trail import AuditTrail
         self.client.endpoint = E.ENDPOINT_WITH_QUERY_SECRET
         self.client.complete.side_effect = [
