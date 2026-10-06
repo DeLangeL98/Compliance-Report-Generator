@@ -60,3 +60,12 @@ See [AUDIT-CRITERIA.md](AUDIT-CRITERIA.md) for control objectives, acceptance cr
 ## Part of SAAF Project
 
 [saaf-portal.vercel.app](https://saaf-portal.vercel.app)
+
+## Tests
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m unittest discover -s tests
+```
+
+CI (`.github/workflows/tests.yml`) runs the same suite on every pull request and push to `main`, and posts a short test report as a PR comment and job summary. The suite makes no API calls.
