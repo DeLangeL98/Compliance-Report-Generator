@@ -88,7 +88,7 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
 - **Real entity names are sent to a third-party API** with no warning or opt-out.
 - **No persistent audit trail** (see section 7).
-- **Tests are unit-level only.** Only one test exercises `ComplianceAgent.run` with a mocked response (out-of-scope framework). Not evaluated against real model output.
+- **Tests are mostly unit-level.** `tests/test_agent_run.py` exercises `ComplianceAgent.run` with a mocked client (success, JSON extraction, no-JSON, schema-invalid, 4xx/5xx/connection errors), and grounding and disclaimer tests also use mocked responses. Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
 - **Repo ownership.** Plan was submitted on the maintainer's behalf by a colleague; the Check and Act PDCA phases are not started.
 
@@ -101,10 +101,10 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 | CO-1 #1–#3 (mapping) | ☐ | Candidate tests: `TestFrameworkMapper.test_us_healthcare_includes_hipaa`, `test_us_private_excludes_sox`, `test_eu_finserv_includes_dora`, `test_framework_matches_have_rationale` — not yet run |
 | CO-1 #4 (prompt lists only mapped frameworks) | ☐ | Candidate: `TestSystemPromptBuilder.test_system_prompt_injects_framework_names` — not yet run |
 | CO-1 #5 (out-of-scope framework rejected) | ☑ | `TestGroundingCheck.*` passed on 2026-10-06 (`python -m unittest discover -s tests`, 52 tests OK); mocked API only, not a live model run |
-| CO-2 #1–#2 (JSON extraction) | ☐ | Candidate tests: `TestJsonExtraction.*` — not yet run; no-JSON error path untested |
-| CO-2 #3 (schema violation) | ☐ | Candidate: `TestPydanticModels.test_invalid_*_rejected`; agent-level path untested |
+| CO-2 #1–#2 (JSON extraction) | ☑ | `tests.test_agent_run`: `TestAgentRunSuccess.test_markdown_fenced_json_is_extracted`, `test_prose_wrapped_json_is_extracted`, `TestAgentRunInvalidOutput.test_no_json_raises_with_raw_response` (mocked client, run 2026-10-06, passing). Also candidate: `TestJsonExtraction.*` |
+| CO-2 #3 (schema violation) | ☑ | `tests.test_agent_run`: `TestAgentRunInvalidOutput.test_schema_invalid_json_raises_with_raw_response` (mocked client, run 2026-10-06, passing) |
 | CO-2 #4 (CLI rejects bad enum) | ☐ | Candidate: `TestCliDryRun.test_invalid_industry_rejected_by_cli` — not yet run |
-| CO-2 #5 (API retry behaviour) | ☐ | No test |
+| CO-2 #5 (API retry behaviour) | ☑ | `tests.test_agent_run`: `TestAgentRunApiErrors.test_4xx_fails_immediately_without_retry`, `test_5xx_retries_max_retries_then_fails`, `test_connection_error_retries_max_retries_then_fails`, `test_transient_5xx_then_success_returns_report` (mocked client, run 2026-10-06, passing) |
 | CO-3 #1 (disclaimer shown) | ☑ | `TestDisclaimerNotOverridable.test_disclaimer_in_rendered_report`, `test_disclaimer_in_json_output`; `python -m unittest discover -s tests` passed (53 tests), 2026-10-06 |
 | CO-3 #2 (disclaimer omitted/rewritten) | ☑ | `TestDisclaimerNotOverridable.test_omitted_disclaimer_gets_standard_text`, `test_rewritten_disclaimer_is_replaced`, `test_schema_hides_disclaimer_from_model`; same run |
 | CO-3 #3 (no compliance conclusion) | ☐ | Not implemented (prompt wording only) |
