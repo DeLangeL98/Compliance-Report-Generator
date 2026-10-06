@@ -185,6 +185,9 @@ def check_reference(
     clause_lists: Dict[str, ClauseList],
 ) -> ReferenceCheckResult:
     """Check one reference. A bare clause takes its framework from ``parent_name``."""
+    # The reference's own framework wins; the parent's is only used for a bare
+    # clause that names no framework at all (so "SOX Section 404" inside a GLBA
+    # assessment is never checked against GLBA).
     named = frameworks_named(reference) or frameworks_named(parent_name)
     covered = [k for k in named if k in clause_lists]
 
@@ -212,8 +215,13 @@ def check_reference(
                        note="cited below the level of the official list; parent exists; "
                             "content not verified")
 
-    if _names_mapped_framework(reference, aliases) or _names_mapped_framework(parent_name, aliases):
+    # A framework without a clause list (named in the reference or inherited
+    # from the parent), or the loose alias heuristic for mapped frameworks.
+    if (any(k in mapped_keys for k in named)
+            or (not named and (_names_mapped_framework(reference, aliases)
+                               or _names_mapped_framework(parent_name, aliases)))):
         return _result(location, fld, reference, "framework_not_covered",
+                       key=next((k for k in named if k in mapped_keys), None),
                        note="no official clause list for this framework yet; reference not checked")
     return _result(location, fld, reference, "unmapped_framework",
                    note="names no framework in the mapped set")

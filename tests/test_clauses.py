@@ -75,6 +75,9 @@ FULL_NAMES = {
     "NIST_800_53": "NIST SP 800-53 Rev 5 — Security and Privacy Controls",
     "NIST_CSF": "NIST Cybersecurity Framework v2.0",
     "ISO_27001": "ISO/IEC 27001:2022 — Information Security Management",
+    "PDPA_SG": "Personal Data Protection Act 2012 (PDPA) — Singapore",
+    "HITRUST_CSF": "HITRUST CSF",
+    "SOX": "Sarbanes-Oxley Act 2002 (SOX)",
 }
 
 
@@ -271,6 +274,38 @@ REAL_EXPECTATIONS = [
     ("UK_GDPR", "DPA 2018 s.170", "identifier_found"),
     ("CCPA_CPRA", "Cal. Civ. Code 1798.100", "identifier_found"),
 ]
+
+
+class TestUncoveredFrameworksDoNotBorrowCoveredOnes(unittest.TestCase):
+    """Names of frameworks without a clause list must not resolve to covered ones."""
+
+    def test_pdpa_is_not_the_uk_data_protection_act(self):
+        r = _check_one("Personal Data Protection Act 2012, s.24",
+                       "Personal Data Protection Act (PDPA)", "PDPA_SG", "ISO_27001")
+        self.assertEqual(r.check, "framework_not_covered")
+        self.assertEqual(r.framework_key, "PDPA_SG")
+        self.assertEqual(frameworks_named("Data Protection Act 2018 s.170"), ("UK_GDPR",))
+
+    def test_hitrust_csf_is_not_nist_csf(self):
+        r = _check_one("HITRUST CSF 01.a", "HITRUST CSF", "HITRUST_CSF", "NIST_CSF")
+        self.assertEqual(r.check, "framework_not_covered")
+        self.assertEqual(r.framework_key, "HITRUST_CSF")
+        self.assertEqual(frameworks_named("NIST CSF GV.OC-01"), ("NIST_CSF",))
+
+    def test_other_framework_inside_a_covered_assessment_is_not_checked_against_it(self):
+        r = _check_one("ISO 27001 A.8.3", FULL_NAMES["HIPAA"], "HIPAA", "ISO_27001")
+        self.assertEqual(r.check, "framework_not_covered")
+        r = _check_one("SOX Section 404", FULL_NAMES["GLBA"], "GLBA", "SOX")
+        self.assertEqual(r.check, "framework_not_covered")
+        self.assertEqual(r.framework_key, "SOX")
+
+    def test_unmapped_other_framework_inside_a_covered_assessment(self):
+        r = _check_one("SOX Section 404", FULL_NAMES["GLBA"], "GLBA")
+        self.assertEqual(r.check, "unmapped_framework")
+
+    def test_bare_clause_still_uses_the_parent(self):
+        self.assertEqual(_check_one("Section 6801(b)", FULL_NAMES["GLBA"], "GLBA").check,
+                         "identifier_found")
 
 
 class TestShippedClauseData(unittest.TestCase):

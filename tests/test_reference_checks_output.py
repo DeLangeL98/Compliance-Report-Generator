@@ -74,6 +74,9 @@ class TestAgentReferenceChecks(_AgentTestCase):
         self.assertEqual(checks["H-1"].check, "identifier_found")
         self.assertEqual(checks["H-2"].check, "identifier_not_found")
         self.assertEqual(checks["H-3"].check, "identifier_found")
+        # a framework without a clause list is not checked against the parent's list
+        self.assertEqual(checks["H-4"].check, "framework_not_covered")
+        self.assertEqual(checks["H-4"].framework_key, "ISO_27001")
         self.assertGreater(checks["H-1"].confidence, checks["H-2"].confidence)
 
     def test_model_supplied_reference_checks_are_ignored(self):

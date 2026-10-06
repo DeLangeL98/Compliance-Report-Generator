@@ -25,7 +25,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Tuple
+from typing import Dict, Iterable, Mapping, Set, Tuple
 
 CLAUSE_DATA_DIR = Path(__file__).parent / "clause_data"
 
@@ -177,16 +177,70 @@ def _phrase_spans(norm: str, phrase: str) -> Iterable[Tuple[int, int]]:
         yield m.span()
 
 
-def frameworks_named(text: str) -> Tuple[str, ...]:
-    """Covered framework keys named in ``text`` (longest-match wins).
+# Fragments of framework names that are too generic to identify a framework.
+_TOO_GENERIC = frozenset({"iso", "iec", "singapore", "australia", "apps", "eu", "us", "uk"})
 
-    A match wholly inside a longer match for another framework is dropped, so
-    "UK GDPR Art. 5" names UK_GDPR only. Keys are returned in order of first
-    appearance.
+
+def _registry_aliases(key: str, full_name: str) -> Set[str]:
+    """Normalised alias phrases for a registry framework (key, name, acronyms)."""
+    out = {normalise_text(key.replace("_", " "))}
+    head = re.split(r"\s+[—–-]\s+", full_name, maxsplit=1)[0]
+    out.add(normalise_text(re.sub(r"\([^)]*\)", "", head)))
+    for part in re.split(r"\s*/\s*|\s+&\s+", head):
+        out.add(normalise_text(re.sub(r"\([^)]*\)", "", part)))
+    out.add(normalise_text(re.sub(r"(?i)\bIEC\b", "", head.replace("/", " "))))
+    for group in re.findall(r"\(([^)]*)\)", full_name):
+        for part in re.split(r"\s*/\s*", group):
+            out.add(normalise_text(part))
+    covered = {a for aliases in FRAMEWORK_ALIASES.values() for a in aliases}
+    return {
+        a for a in out
+        if len(a) >= 3 and not a.isdigit() and a not in _TOO_GENERIC and a not in covered
+    }
+
+
+# Common short forms the registry names do not spell out.
+_EXTRA_UNCOVERED_ALIASES: Mapping[str, Tuple[str, ...]] = {
+    "PDPA_SG": ("pdpa", "personal data protection act"),
+    "SOC2": ("soc 2", "soc ii"),
+    "HITRUST_CSF": ("hitrust",),
+    "AU_PRIVACY_ACT": ("privacy act", "australian privacy principles"),
+    "NERC_CIP": ("nerc",),
+    "SOX": ("sarbanes oxley", "sarbox"),
+    "CSA_CCM": ("cloud controls matrix",),
+}
+
+
+def _uncovered_aliases() -> Dict[str, Tuple[str, ...]]:
+    """Aliases of registry frameworks WITHOUT a clause list.
+
+    They take part in the longest-match rule so that, for example, "HITRUST
+    CSF" is not read as "NIST CSF" and "Personal Data Protection Act" is not
+    read as the UK "Data Protection Act".
+    """
+    from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
+
+    return {
+        key: tuple(sorted(
+            _registry_aliases(key, entry["full_name"]) | set(_EXTRA_UNCOVERED_ALIASES.get(key, ()))
+        ))
+        for key, entry in FRAMEWORK_REGISTRY.items()
+        if key not in CLAUSE_LISTS
+    }
+
+
+def frameworks_named(text: str) -> Tuple[str, ...]:
+    """Framework keys named in ``text`` (longest-match wins).
+
+    Covers frameworks with and without a clause list, so a reference to an
+    uncovered framework is never attributed to a covered one. A match wholly
+    inside a longer match for another framework is dropped ("UK GDPR Art. 5"
+    names UK_GDPR only). Keys are returned in order of first appearance.
     """
     norm = normalise_text(text)
+    table: Dict[str, Tuple[str, ...]] = {**_uncovered_aliases(), **FRAMEWORK_ALIASES}
     hits = []  # (start, end, key)
-    for key, aliases in FRAMEWORK_ALIASES.items():
+    for key, aliases in table.items():
         for alias in aliases:
             for start, end in _phrase_spans(norm, alias):
                 hits.append((start, end, key))
