@@ -89,7 +89,7 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
 - **Real entity names are sent to a third-party API** with no warning or opt-out.
 - **No persistent audit trail** (see section 7).
-- **Tests are unit-level only.** No test exercises `ComplianceAgent.run` with a mocked or recorded API response, and no test covers a model response with an out-of-scope framework or a rewritten disclaimer. Not evaluated against real model output.
+- **Tests are mostly unit-level.** `tests/test_agent_run.py` exercises `ComplianceAgent.run` with a mocked client (success, JSON extraction, no-JSON, schema-invalid, 4xx/5xx/connection errors). Still untested: a model response with an out-of-scope framework or a rewritten disclaimer, and disclaimer presence in rendered/JSON output. Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
 - **Repo ownership.** Plan was submitted on the maintainer's behalf by a colleague; the Check and Act PDCA phases are not started.
 
@@ -102,10 +102,10 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 | CO-1 #1–#3 (mapping) | ☐ | Candidate tests: `TestFrameworkMapper.test_us_healthcare_includes_hipaa`, `test_us_private_excludes_sox`, `test_eu_finserv_includes_dora`, `test_framework_matches_have_rationale` — not yet run |
 | CO-1 #4 (prompt lists only mapped frameworks) | ☐ | Candidate: `TestSystemPromptBuilder.test_system_prompt_injects_framework_names` — not yet run |
 | CO-1 #5 (out-of-scope framework rejected) | ☐ | Not implemented |
-| CO-2 #1–#2 (JSON extraction) | ☐ | Candidate tests: `TestJsonExtraction.*` — not yet run; no-JSON error path untested |
-| CO-2 #3 (schema violation) | ☐ | Candidate: `TestPydanticModels.test_invalid_*_rejected`; agent-level path untested |
+| CO-2 #1–#2 (JSON extraction) | ☑ | `tests.test_agent_run`: `TestAgentRunSuccess.test_markdown_fenced_json_is_extracted`, `test_prose_wrapped_json_is_extracted`, `TestAgentRunInvalidOutput.test_no_json_raises_with_raw_response` (mocked client, run 2026-10-06, passing). Also candidate: `TestJsonExtraction.*` |
+| CO-2 #3 (schema violation) | ☑ | `tests.test_agent_run`: `TestAgentRunInvalidOutput.test_schema_invalid_json_raises_with_raw_response` (mocked client, run 2026-10-06, passing) |
 | CO-2 #4 (CLI rejects bad enum) | ☐ | Candidate: `TestCliDryRun.test_invalid_industry_rejected_by_cli` — not yet run |
-| CO-2 #5 (API retry behaviour) | ☐ | No test |
+| CO-2 #5 (API retry behaviour) | ☑ | `tests.test_agent_run`: `TestAgentRunApiErrors.test_4xx_fails_immediately_without_retry`, `test_5xx_retries_max_retries_then_fails`, `test_connection_error_retries_max_retries_then_fails`, `test_transient_5xx_then_success_returns_report` (mocked client, run 2026-10-06, passing) |
 | CO-3 #1 (disclaimer shown) | ☐ | No test |
 | CO-3 #2–#3 | ☐ | Not implemented |
 | CO-4 #1 (missing key) | ☐ | Candidate: `TestCliDryRun.test_dry_run_no_api_key_needed` covers dry-run only |
