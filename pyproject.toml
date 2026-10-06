@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 100
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "PERF"]
+ignore = ["E501"]  # line length is left to the (not yet enforced) formatter
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # tests adjust sys.path before importing the package

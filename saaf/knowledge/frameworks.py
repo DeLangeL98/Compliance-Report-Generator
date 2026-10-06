@@ -498,6 +498,40 @@ FRAMEWORK_REGISTRY: dict[str, dict] = {
         ],
     },
 
+    # ── Netherlands — government ─────────────────────────────────────────
+
+    "BIO2": {
+        "full_name": "Baseline Informatiebeveiliging Overheid 2 (BIO2) — Dutch Government Information Security Baseline",
+        "description": (
+            "The government-wide information security baseline of the Netherlands, covering the "
+            "central government, provinces, municipalities and water boards. BIO2 v1.3 was published "
+            "in Staatscourant 2026, 7416 (in force 5 March 2026, replacing v1.04) and was established "
+            "by the Overheidsbreed Beleidsoverleg Digitale Overheid (OBDO) on 23 September 2025. "
+            "Part 1 (BIO2-kader) is structured according to ISO/IEC 27001:2023; part 2 "
+            "(BIO-overheidsmaatregelen) is structured according to ISO/IEC 27002:2022 and adds "
+            "government-specific measures. It replaces the three fixed baseline security levels of "
+            "BIO 1 with an explicitly risk-driven approach. It is mandatory self-regulation for the "
+            "central government, provinces and water boards; for organisations in scope of the "
+            "Cyberbeveiligingswet (the Dutch NIS2 implementation, in force 15 August 2026) applying "
+            "the BIO2 measures is a legal obligation. Cite ISO 27001/27002 structure only: the "
+            "government-specific measure numbers are not part of the provided knowledge."
+        ),
+        "domains": [
+            "Context, Scope and Leadership — ISMS scope, policy, roles and management commitment",
+            "Risk Assessment and Treatment — risk-driven selection of security measures",
+            "Support, Awareness and Documented Information",
+            "Performance Evaluation and Improvement — monitoring, internal audit, corrective action",
+            "Organisational Controls — policies, roles, access control, supplier relationships, incident management, continuity, compliance",
+            "People Controls — screening, awareness, terms of employment, remote working",
+            "Physical Controls — secure areas, equipment security, media handling",
+            "Technological Controls — endpoint security, authentication, cryptography, logging and monitoring, network security, secure development, vulnerability management",
+        ],
+        "audit_topics": ["Cybersecurity", "IT General Controls", "Vendor Management", "Business Continuity"],
+        "industries": ["Government"],
+        "listed_status": ["*"],
+        "jurisdictions": ["NL"],
+    },
+
     # ── Energy & Critical Infrastructure ─────────────────────────────────
 
     "NERC_CIP": {
@@ -739,7 +773,7 @@ FRAMEWORK_REGISTRY: dict[str, dict] = {
 #
 # KB_VERSION identifies the hand-maintained knowledge base content. Bump it
 # whenever framework or regulation entries change.
-KB_VERSION = "0.1.0"
+KB_VERSION = "0.2.0"
 
 # Per-framework provenance. Keys:
 #   last_reviewed: ISO date (YYYY-MM-DD) a maintainer last verified the entry
@@ -750,6 +784,11 @@ _FRAMEWORK_METADATA: dict[str, dict] = {
     "GDPR": {"source": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"},
     "DORA": {"source": "https://eur-lex.europa.eu/eli/reg/2022/2554/oj"},
     "MiFID_II": {"source": "https://eur-lex.europa.eu/eli/dir/2014/65/oj"},
+    # Checked against the Staatscourant publication on 2026-10-06 (issue #35)
+    "BIO2": {
+        "source": "https://zoek.officielebekendmakingen.nl/stcrt-2026-7416-n1.html",
+        "last_reviewed": "2026-10-06",
+    },
 }
 
 for _key, _entry in FRAMEWORK_REGISTRY.items():
