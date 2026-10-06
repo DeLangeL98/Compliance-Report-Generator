@@ -33,9 +33,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
+from test_clauses import FULL_NAMES, REAL_EXPECTATIONS  # noqa: E402
+
 from saaf.core.reference_check import check_references  # noqa: E402
 from saaf.knowledge.clauses import CLAUSE_DATA_DIR, load_clause_lists  # noqa: E402
-from test_clauses import FULL_NAMES, REAL_EXPECTATIONS  # noqa: E402
 
 # script -> framework keys it writes
 SCRIPTS = {
