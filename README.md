@@ -25,6 +25,10 @@ python cli.py --company "..." --industry "Financial Services" \
 
 # JSON output
 python cli.py ... --output json
+
+# SAAF finding-schema export (critical gaps and framework key gaps as findings;
+# Critical is mapped to High, see saaf/output/findings.py)
+python cli.py ... --output findings
 ```
 
 Requires `ANTHROPIC_API_KEY` set in the environment.
