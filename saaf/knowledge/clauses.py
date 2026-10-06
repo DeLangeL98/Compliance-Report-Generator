@@ -149,6 +149,19 @@ INSTRUMENT_ALIASES: Mapping[str, Mapping[str, Tuple[str, ...]]] = {
 }
 
 
+# Public-law section numbers that models cite instead of the US Code section.
+# GLBA = Pub. L. 106-102, title V; the mapping is stated in each section's own
+# source-credit line in the US Code (govinfo, 2024 Edition), e.g. 15 U.S.C. 6801
+# "Pub. L. 106-102, title V, §501". Section 506 is omitted: only §506(c) is in
+# the Code (15 U.S.C. 6806); §506(a)-(b) amended other statutes.
+LOCATOR_ALIASES: Mapping[str, Mapping[str, str]] = {
+    "GLBA": {
+        **{str(n): str(n + 6300) for n in (501, 502, 503, 504, 505, 507, 508, 509)},
+        **{str(n): str(n + 6300) for n in range(521, 528)},
+    },
+}
+
+
 def normalise_text(text: str) -> str:
     """Lower-case and collapse every run of non-alphanumerics to one space."""
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()

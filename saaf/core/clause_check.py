@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from saaf.knowledge.clauses import ClauseList, Instrument, instruments_named
+from saaf.knowledge.clauses import LOCATOR_ALIASES, ClauseList, Instrument, instruments_named
 
 # ---------------------------------------------------------------------------
 # Locator parsing
@@ -123,7 +123,7 @@ def parse_locators(text: str) -> List[Locator]:
         found.append(Locator("annex", m.group(1).upper(), (), m.group(0)))
 
     # NIST CSF 2.0 subcategory / category, e.g. GV.OC-01, GV.OC
-    for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})-(\d{2})\b", text, re.IGNORECASE):
+    for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})-(\d{1,2})\b", text, re.IGNORECASE):
         found.append(Locator("sub", f"{m.group(1)}.{m.group(2)}-{m.group(3)}".upper(), (), m.group(0), True))
     for m in re.finditer(r"\b([a-z]{2})\.([a-z]{2})\b(?!-\d)", text, re.IGNORECASE):
         found.append(Locator("cat", f"{m.group(1)}.{m.group(2)}".upper(), (), m.group(0), True))
@@ -192,7 +192,7 @@ def _canonical_number(prefix: str, loc: Locator) -> str:
 def _match_in_instrument(idx: _Index, prefix: str, loc: Locator) -> LocatorMatch:
     base = f"{prefix}:{_canonical_number(prefix, loc)}".lower()
     if base not in idx.lower:
-        return LocatorMatch(loc, NOT_FOUND, None, f"{idx_name(prefix, loc)} is not in the official list")
+        return LocatorMatch(loc, NOT_FOUND, None, "not in the official clause list")
     cur = base
     for depth, sub in enumerate(loc.subs):
         nxt = f"{cur}({sub.lower()})"
@@ -207,10 +207,6 @@ def _match_in_instrument(idx: _Index, prefix: str, loc: Locator) -> LocatorMatch
         return LocatorMatch(loc, FOUND_PARENT, idx.lower[cur],
                             f"finer than the official list; accepted because {idx.lower[cur].split(':', 1)[1]} exists")
     return LocatorMatch(loc, FOUND_EXACT, idx.lower[cur])
-
-
-def idx_name(prefix: str, loc: Locator) -> str:
-    return f"{prefix}:{loc.display()}"
 
 
 def match_locators(
@@ -233,7 +229,15 @@ def match_locators(
                 if prefix not in inst.kinds:
                     continue
                 applicable = True
-                m = _match_in_instrument(_index(cl.framework_key, inst), prefix, loc)
+                idx = _index(cl.framework_key, inst)
+                m = _match_in_instrument(idx, prefix, loc)
+                alias = LOCATOR_ALIASES.get(cl.framework_key, {}).get(loc.number)
+                if m.outcome == NOT_FOUND and alias and prefix == "sec":
+                    m2 = _match_in_instrument(
+                        idx, prefix, Locator(loc.kind, alias, loc.subs, loc.raw, loc.weak))
+                    if m2.outcome != NOT_FOUND:
+                        m = LocatorMatch(loc, m2.outcome, m2.identifier,
+                                         f"public-law section {loc.number} read as US Code {alias}")
                 if best is None or _rank(m) > _rank(best):
                     best = m
         if not applicable and loc.weak:

@@ -22,7 +22,7 @@ markers such as ``(a)(1)`` or ``(iv)``) is rebuilt from nesting context by
 the current paragraph or as the *successor of a paragraph already open*; the
 "(i)/(v)/(x)" letter-vs-roman ambiguity is resolved by that rule (and, if still
 ambiguous, by one-paragraph look-ahead). Anything that cannot be resolved
-raises, and the section falls back to section level (reported).
+raises, and the section then lists only its top-level lettered paragraphs (reported).
 """
 
 from __future__ import annotations
@@ -63,10 +63,18 @@ def to_roman(n: int) -> str:
 ROMAN_LOWER = {to_roman(n) for n in range(1, 40)}
 ROMAN_UPPER = {r.upper() for r in ROMAN_LOWER}
 
-# depth -> kind. CFR/USC nesting: (a) (1) (i) (A) (1)-roman-upper ... ; eCFR italicises
-# deeper levels but the italics are lost in plain text, so depths >= 5 are by type only.
-KINDS = ["alpha", "digit", "roman", "ALPHA", "ROMAN", "digit", "alpha"]
-MAX_DEPTH = len(KINDS)
+# depth -> kind of marker. The CFR cycles (a) (1) (i) (A) then the italic levels
+# (1) (i) (A) (Federal Register Document Drafting Handbook); the U.S. Code uses
+# (a) (1) (A) (i) (I) (aa) (AA). eCFR italics are lost in plain text, so deeper
+# levels are told apart by type only.
+CFR_KINDS = ["alpha", "digit", "roman", "ALPHA", "digit", "roman", "ALPHA"]
+USC_KINDS = ["alpha", "digit", "ALPHA", "roman", "ROMAN", "alpha", "ALPHA"]
+KINDS = CFR_KINDS
+
+
+def use_kinds(kinds: list[str]) -> None:
+    global KINDS
+    KINDS = kinds
 
 
 def kind_depths(m: str) -> list[int]:
@@ -89,13 +97,11 @@ def successor(m: str, depth: int) -> str:
     k = KINDS[depth]
     if k == "digit":
         return str(int(m) + 1)
-    if k == "roman":
+    if k in ("roman", "ROMAN"):
         for n in range(1, 60):
-            if to_roman(n) == m:
-                return to_roman(n + 1)
+            if to_roman(n) == m.lower():
+                return to_roman(n + 1) if k == "roman" else to_roman(n + 1).upper()
         return "?"
-    if k == "ROMAN":
-        return successor(m.lower(), 2).upper()
     # alpha / ALPHA: a..z, aa, bb, ... zz, aaa
     c = m[0]
     if c in "zZ":
@@ -110,44 +116,74 @@ def first_of(depth: int) -> set[str]:
             "alpha": {"a"}, "ALPHA": {"A"}}[k]
 
 
+AMBIGUITIES: list[str] = []  # sibling markers resolved by the innermost-list rule
+
+
 class ParagraphError(Exception):
     pass
 
 
 class ParagraphResolver:
-    """Rebuild paragraph paths for one section from its ordered marker chains."""
+    """Rebuild paragraph paths for one section from its ordered marker chains.
+
+    State is a list of (marker, depth) pairs. A marker is accepted as
+    (1) the first child of the open paragraph (depth = parent depth + 1), or
+    (2) the successor of an open paragraph at the same depth (closing deeper ones).
+    Only if neither reading exists is a child allowed to skip one or two depth
+    levels (the CFR sometimes numbers (c)(1)(A) with no (i) level); the skipped
+    level simply does not appear in the identifier.
+    """
 
     def __init__(self) -> None:
-        self.stack: list[str] = []
+        self.state: list[tuple[str, int]] = []
 
-    def _candidates(self, m: str, stack: list[str]) -> list[list[str]]:
-        res = []
+    @property
+    def stack(self) -> list[str]:
+        return [m for m, _ in self.state]
+
+    def _candidates(self, m: str, state: list[tuple[str, int]],
+                    allow_skip: bool = True) -> list[list[tuple[str, int]]]:
+        top = state[-1][1] if state else -1
+        strict, skip = [], []
         for d in kind_depths(m):
-            if d == len(stack) and m in first_of(d):
-                res.append(stack + [m])
-            elif d < len(stack) and m == successor(stack[d], d):
-                res.append(stack[:d] + [m])
-        return res
+            if d == top + 1 and m in first_of(d):
+                strict.append(state + [(m, d)])
+            elif allow_skip and d == top + 2 and m in first_of(d):
+                skip.append(state + [(m, d)])
+            for idx, (sm, sd) in enumerate(state):
+                if sd == d and m == successor(sm, d):
+                    strict.append(state[:idx] + [(m, d)])
+        return strict or skip
 
     def feed(self, chain: list[str], nxt: str | None) -> list[str]:
-        cands = self._candidates(chain[0], self.stack)
+        cands = self._candidates(chain[0], self.state)
         if len(cands) > 1 and nxt:
-            ok = [c for c in cands if self._candidates(nxt, c)]
+            ok = [c for c in cands if self._candidates(nxt, c, allow_skip=False)]
             if len(ok) >= 1:
                 cands = ok
+        if len(cands) > 1 and all(len(c) <= len(self.state) for c in cands):
+            # several open lists could take this sibling marker (e.g. "(2)" while both
+            # (f)(1) and (f)(1)(ii)(C)(1) are open): a list continues at its innermost
+            # open level. Counted and reported so such sections can be reviewed.
+            cands = [max(cands, key=len)]
+            AMBIGUITIES.append(f"{chain[0]} after {self.stack}")
         if len(cands) != 1:
             raise ParagraphError(
                 f"marker {chain!r} after {self.stack!r}: {len(cands)} candidates")
-        stack = cands[0]
+        state = cands[0]
         for m in chain[1:]:
-            if len(stack) >= MAX_DEPTH or m not in first_of(len(stack)):
+            top = state[-1][1]
+            ds = [d for d in kind_depths(m) if d in (top + 1, top + 2) and m in first_of(d)]
+            if len(ds) != 1:
                 raise ParagraphError(f"chain {chain!r} after {self.stack!r}: bad child {m!r}")
-            stack = stack + [m]
-        self.stack = stack
-        return stack
+            state = state + [(m, ds[0])]
+        self.state = state
+        return [m for m, _ in state]
 
 
-_SEG = re.compile(r"^((?:\([A-Za-z0-9]+\))+)\s*(?:\x01[^\x02]*\x02\s*)?")
+_SEG = re.compile(r"^((?:\([A-Za-z0-9]+\))+)\s*(?:\x01[^\x02]*\x02[—–:]?\s*)?")
+# "(b)-(d) [Reserved]" style ranges of reserved paragraphs
+_RANGE = re.compile(r"^\(([A-Za-z0-9]+)\)\s*[-–—]\s*\(([A-Za-z0-9]+)\)\s*\[(?:Reserved|Removed)\]")
 _MARK = re.compile(r"\(([A-Za-z0-9]+)\)")
 
 
@@ -177,16 +213,45 @@ def paragraph_ids(section_id: str, paragraphs: list[str]) -> tuple[list[str], li
     ``section_id`` is e.g. ``164.312``. Falls back to ``[section_id]`` plus a
     problem string when the hierarchy cannot be reconstructed reliably.
     """
-    items = []  # (chain, rest)
+    # events: ("def",) | ("range", first, last) | ("p", chains, rest)
+    items: list[tuple] = []
     for t in paragraphs:
+        rm = _RANGE.match(t.strip())
+        if rm:
+            items.append(("range", rm.group(1), rm.group(2)))
+            continue
         sm = split_marker(t)
         if sm:
-            items.append(sm)
+            items.append(("p", sm[0], sm[1]))
+        elif t.startswith("\x01"):
+            # unmarked paragraph opening with an italic term: a definition ("X means ...").
+            # Numbering inside definitions restarts and is not a paragraph of the section.
+            items.append(("def",))
     res = ParagraphResolver()
     ids: list[str] = []
+    in_def: list[str] | None = None  # stack snapshot taken when a definition began
     try:
-        for i, (chains, rest) in enumerate(items):
-            nxt = items[i + 1][0][0][0] if i + 1 < len(items) else None
+        for i, it in enumerate(items):
+            if it[0] == "def":
+                in_def = list(res.state)
+                continue
+            if it[0] == "range":
+                res.feed([it[1]], None)
+                while res.state[-1][0] != it[2]:
+                    res.feed([successor(*res.state[-1])], None)
+                in_def = None
+                continue
+            _, chains, rest = it
+            if in_def is not None:
+                # inside a definition only a sibling at a level above the definition ends it
+                # (a child of the open paragraph would have len(stack)+1 > len(in_def))
+                if not any(len(x) <= len(in_def)
+                           for x in res._candidates(chains[0][0], res.state)):
+                    continue
+                in_def = None
+            nxt = None
+            if i + 1 < len(items) and items[i + 1][0] == "p":
+                nxt = items[i + 1][1][0][0]
             opened = []
             for j, chain in enumerate(chains):
                 look = nxt if j == len(chains) - 1 else chains[j + 1][0]
@@ -198,7 +263,19 @@ def paragraph_ids(section_id: str, paragraphs: list[str]) -> tuple[list[str], li
                 for k in range(len(stack) - n + 1, len(stack) + 1):
                     ids.append("cfr:" + section_id + "".join(f"({x})" for x in stack[:k]))
     except ParagraphError as exc:
-        return [], [f"{section_id}: {exc}"]
+        # Fallback: only the top-level lettered paragraphs, taken as the strict sequence
+        # a, b, c, ... of paragraphs that open with that marker (reliable even when a
+        # deeper level of the source text is irregular). Reported as a problem.
+        exp, top = "a", []
+        for it in items:
+            if it[0] == "p" and it[1][0] == [exp] and not is_reserved_text(it[2]):
+                top.append(f"cfr:{section_id}({exp})")
+                exp = successor(exp, 0)
+            elif it[0] == "p" and it[1][0] == [exp]:
+                exp = successor(exp, 0)
+            elif it[0] == "range" and it[1] == exp:
+                exp = successor(it[2], 0)
+        return top, [f"{section_id}: {exc}"]
     return ids, []
 
 
@@ -279,6 +356,7 @@ def parse_ecfr_part(title: int, part: str, cache: Path | None) -> dict:
     ids: list[str] = []
     problems: list[str] = []
     sections_listed: list[str] = []
+    texts: dict[str, str] = {}
     skipped_reserved: list[str] = []
     for div in root.iter("DIV8"):
         n = div.get("N", "")
@@ -291,6 +369,8 @@ def parse_ecfr_part(title: int, part: str, cache: Path | None) -> dict:
         sections_listed.append(n)
         ids.append(f"cfr:{n}")
         paras = [ptext_marked(c) for c in div if c.tag in ("P", "FP")]
+        texts[n] = " ".join(paras)
+        use_kinds(CFR_KINDS)
         pids, probs = paragraph_ids(n, paras)
         ids.extend(pids)
         problems.extend(probs)
@@ -304,11 +384,27 @@ def parse_ecfr_part(title: int, part: str, cache: Path | None) -> dict:
     # the 'reserved' sections of the structure endpoint must not be in our list
     assert not (set(sections_listed) & {k for k, v in struct.items() if v})
     assert len(set(ids)) == len(ids), "duplicate identifiers"
+    # independent check: the text's own internal citations ("paragraph (a)(2)(iii) of this
+    # section") must be identifiers we derived, for every section that parsed cleanly
+    idset = set(ids)
+    bad_sections = {p.split(":")[0] for p in problems}
+    refs = unresolved = 0
+    unresolved_list = []
+    for n, t in texts.items():
+        if n in bad_sections:
+            continue
+        for m in re.finditer(r"paragraphs? ((?:\([A-Za-z0-9]+\))+)(?= of this section)", t):
+            refs += 1
+            if f"cfr:{n}{m.group(1)}" not in idset:
+                unresolved += 1
+                unresolved_list.append(f"{n}{m.group(1)}")
+    print(f"  internal-citation check: {refs} 'paragraph ... of this section' citations, "
+          f"{unresolved} not among derived identifiers: {unresolved_list[:15]}", file=sys.stderr)
     print(f"{title} CFR {part}: {len(sections_listed)} sections, {len(ids)} identifiers "
           f"({len(ids) - len(sections_listed)} paragraph-level); structure endpoint lists "
           f"{len(struct)} entries of which {len(struct) - len(struct_live)} reserved; "
           f"{len(skipped_reserved)} reserved/removed skipped; "
-          f"{len(problems)} sections fell back to section level", file=sys.stderr)
+          f"{len(problems)} sections fell back to top-level paragraphs only", file=sys.stderr)
     for p in problems:
         print("  fallback:", p, file=sys.stderr)
     return {"ids": ids, "url": url, "struct_url": struct_url, "dates": dates, "issue": issue,
@@ -368,23 +464,16 @@ def parse_usc(cache: Path | None) -> dict:
         body = blk.split("<!-- field-start:statute -->")[1].split("<!-- field-end:statute -->")[0]
         mc = re.search(r'<p class="source-credit">(.*?)</p>', blk, re.S)
         credits[num] = html.unescape(re.sub(r"<[^>]*>", "", mc.group(1))) if mc else ""
-        # paragraph-level: h4.subsection-head "(a) Heading" and p.statutory-body*(N em) "(1) text"
+        # paragraph-level: heading elements ("(a) Heading": subsection-head, paragraph-head,
+        # subparagraph-head, clause-head ...) and statutory-body* paragraphs ("(1) text").
         paras = []
-        depth_by_text = {}
         for m in re.finditer(
-                r'<(h4 class="subsection-head"|p class="statutory-body(?:-(\d)em)?")>(.*?)</(?:h4|p)>',
+                r'<(?:h\d|p) class="(?:[a-z]+-head|statutory-body[a-z0-9-]*)">(.*?)</(?:h\d|p)>',
                 body, re.S):
-            t = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]*>", "", m.group(3)))).strip()
-            paras.append(t)
-            sm = split_marker(t)
-            if sm:
-                depth_by_text[t] = (0 if m.group(1).startswith("h4") else int(m.group(2) or 0))
-        # drop "(a) Heading" / "(a) text" duplicates are harmless (same marker would repeat):
-        # an h4 "(a) Heading" is followed by body paragraphs without marker, so no repeat.
+            paras.append(re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]*>", "", m.group(1)))).strip())
+        use_kinds(USC_KINDS)
         pids, probs = paragraph_ids(num, paras)
-        if probs:
-            problems.extend(probs)
-            continue
+        problems.extend(probs)
         for pid in pids:
             ids.append("sec:" + pid[len("cfr:"):])
     sub1 = [n for n in listed if 6801 <= int(re.match(r"\d+", n).group(0)) <= 6809]
@@ -426,13 +515,13 @@ def main() -> None:
         "(e.g. 164.404(b), 164.502(a)), so every section and every numbered/lettered paragraph "
         "of 45 CFR Parts 160 and 164 is listed, reconstructed from the eCFR XML nesting. "
         "Reserved and removed sections and paragraphs are not listed. Sections whose paragraph "
-        "hierarchy could not be reconstructed reliably are listed at section level only. "
+        "hierarchy could not be reconstructed reliably are listed with their top-level lettered paragraphs only. "
         "Out of scope: 45 CFR Part 162 (administrative simplification transactions and code "
         "sets) and the HITECH Act statute (Pub. L. 111-5, title XIII), whose breach and "
         "security requirements are implemented by Parts 160/164 and are cited through those parts."
     )
     if p160["problems"] or p164["problems"]:
-        hipaa_rationale += (" Section-level fallback sections: " + "; ".join(
+        hipaa_rationale += (" Sections listed with top-level paragraphs only (irregular numbering in the source text): " + "; ".join(
             sorted({p.split(":")[0] for p in p160["problems"] + p164["problems"]})) + ".")
     write_clause_file("HIPAA", "cfr-paragraph", hipaa_rationale, [
         ecfr_instrument("HIPAA_PART_160", "45 CFR Part 160 - General Administrative Requirements",
@@ -457,7 +546,7 @@ def main() -> None:
     )
     probs = p314["problems"] + p1016["problems"] + usc["problems"]
     if probs:
-        glba_rationale += (" Section-level fallback (paragraph hierarchy not reliably derivable): "
+        glba_rationale += (" Top-level-paragraphs-only fallback (irregular numbering in the source text): "
                            + "; ".join(sorted({p.split(":")[0] for p in probs})) + ".")
     write_clause_file("GLBA", "cfr-paragraph", glba_rationale, [
         {"code": "GLBA_USC",
@@ -473,6 +562,9 @@ def main() -> None:
                         "12 CFR Part 1016 - Privacy of Consumer Financial Information (Regulation P)",
                         p1016, 12),
     ])
+    print(f"\n{len(AMBIGUITIES)} sibling markers resolved by the innermost-list rule:", file=sys.stderr)
+    for x in AMBIGUITIES:
+        print("  ", x, file=sys.stderr)
     print("\nPub. L. 106-102 title V -> U.S.C. source credits:", file=sys.stderr)
     for k, v in sorted(usc["credits"].items()):
         print(f"  {k}: {v}", file=sys.stderr)

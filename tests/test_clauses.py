@@ -57,6 +57,7 @@ LISTS = {
         "cfr:164.312(a)(2)(iv)", "cfr:164.308", "cfr:164.308(a)", "cfr:164.308(a)(1)", "cfr:164.308(a)(1)(ii)",
         "cfr:164.308(a)(1)(ii)(A)",
     ])),
+    "GLBA": _cl("GLBA", _inst("GLBA_USC", ["sec:6801", "sec:6801(b)", "sec:6827"])),
     "NIST_800_53": _cl("NIST_800_53", _inst("SP800_53_R5", [
         "ctrl:AC-2", "ctrl:AC-2(1)", "ctrl:AC-2(2)",
     ])),
@@ -70,6 +71,7 @@ FULL_NAMES = {
     "UK_GDPR": "UK GDPR & Data Protection Act 2018",
     "MiFID_II": "Markets in Financial Instruments Directive II (MiFID II / MiFIR)",
     "HIPAA": "Health Insurance Portability and Accountability Act (HIPAA)",
+    "GLBA": "Gramm-Leach-Bliley Act (GLBA) / FTC Safeguards Rule",
     "NIST_800_53": "NIST SP 800-53 Rev 5 — Security and Privacy Controls",
     "NIST_CSF": "NIST Cybersecurity Framework v2.0",
     "ISO_27001": "ISO/IEC 27001:2022 — Information Security Management",
@@ -219,6 +221,14 @@ class TestCheckReferences(unittest.TestCase):
         self.assertEqual(_check_one("HIPAA 164.312(a)(2)(v)", "x", "HIPAA").check, "identifier_not_found")
         self.assertEqual(_check_one("HIPAA 164.999", "x", "HIPAA").check, "identifier_not_found")
 
+    def test_glba_public_law_section_numbers_map_to_us_code(self):
+        r = _check_one("GLBA Section 501(b)", "x", "GLBA")
+        self.assertEqual(r.check, "identifier_found")
+        self.assertEqual(r.matched_identifiers, ["sec:6801(b)"])
+        self.assertEqual(_check_one("GLBA Section 527", "x", "GLBA").check, "identifier_found")
+        # section 506 is deliberately not mapped (only 506(c) is in the Code)
+        self.assertEqual(_check_one("GLBA Section 506", "x", "GLBA").check, "identifier_not_found")
+
     def test_nist_800_53_enhancement(self):
         self.assertEqual(_check_one("NIST SP 800-53 AC-2(1)", "x", "NIST_800_53").check,
                          "identifier_found")
@@ -227,7 +237,7 @@ class TestCheckReferences(unittest.TestCase):
 
     def test_csf_1_1_ids_not_found(self):
         self.assertEqual(_check_one("NIST CSF PR.AA-01", "x", "NIST_CSF").check, "identifier_found")
-        self.assertEqual(_check_one("NIST CSF PR.AC-1", "x", "NIST_CSF").check, "no_locator")
+        self.assertEqual(_check_one("NIST CSF PR.AC-1", "x", "NIST_CSF").check, "identifier_not_found")
         self.assertEqual(_check_one("NIST CSF PR.AC-01", "x", "NIST_CSF").check, "identifier_not_found")
 
     def test_article_reference_under_nist_csf_is_not_found(self):
@@ -235,8 +245,52 @@ class TestCheckReferences(unittest.TestCase):
                          "identifier_not_found")
 
 
+REAL_EXPECTATIONS = [
+    # (framework, reference, expected check) - checked against the committed data
+    ("GDPR", "GDPR Art. 32(1)", "identifier_found"),
+    ("GDPR", "GDPR Art. 99", "identifier_found"),
+    ("GDPR", "GDPR Art. 100", "identifier_not_found"),
+    ("GDPR", "GDPR Art. 32(1)(b)", "parent_identifier_found"),
+    ("GDPR", "GDPR Recital 173", "identifier_found"),
+    ("DORA", "DORA Art. 28(1)", "identifier_found"),
+    ("DORA", "DORA Art. 65", "identifier_not_found"),
+    ("NIS2", "NIS2 Art. 21(2)", "identifier_found"),
+    ("NIS2", "NIS2 Annex II", "identifier_found"),
+    ("MiFID_II", "MiFIR Art. 27da", "identifier_found"),
+    ("MiFID_II", "MiFID II Art. 16a", "identifier_found"),
+    ("HIPAA", "45 CFR 164.312(a)(2)(iv)", "identifier_found"),
+    ("HIPAA", "45 CFR 164.308(a)(1)(ii)(A)", "identifier_found"),
+    ("HIPAA", "45 CFR 164.312(a)(2)(v)", "identifier_not_found"),
+    ("GLBA", "16 CFR 314.4(c)(1)", "identifier_found"),
+    ("GLBA", "GLBA Section 501(b)", "identifier_found"),
+    ("NIST_800_53", "NIST SP 800-53 AC-2(1)", "identifier_found"),
+    ("NIST_800_53", "NIST SP 800-53 AC-13", "identifier_not_found"),  # withdrawn in Rev 5
+    ("NIST_CSF", "NIST CSF 2.0 GV.OC-01", "identifier_found"),
+    ("NIST_CSF", "NIST CSF PR.AC-1", "identifier_not_found"),  # CSF 1.1 id
+    ("UK_GDPR", "UK GDPR Art. 5", "identifier_found"),
+    ("UK_GDPR", "DPA 2018 s.170", "identifier_found"),
+    ("CCPA_CPRA", "Cal. Civ. Code 1798.100", "identifier_found"),
+]
+
+
 class TestShippedClauseData(unittest.TestCase):
     """Structure checks on saaf/knowledge/clause_data/*.json."""
+
+    def test_known_identifiers_in_committed_data(self):
+        for key, ref, expected in REAL_EXPECTATIONS:
+            if key not in CLAUSE_LISTS:
+                continue
+            with self.subTest(ref=ref):
+                names = {k: FULL_NAMES.get(k, k) for k in CLAUSE_LISTS}
+                mapping = NS(framework_matches=[NS(key=k, full_name=names[k]) for k in CLAUSE_LISTS])
+                report = NS(
+                    framework_assessments=[NS(framework_name="x", control_objectives=[
+                        NS(control_id="C-1", requirement_source=ref)])],
+                    mandatory_regulations=[],
+                )
+                out = check_references(report, mapping)
+                self.assertEqual(out[0].check, expected)
+                self.assertEqual(out[0].status, "unverified")
 
     def test_every_list_declares_granularity_and_rationale(self):
         for key, cl in CLAUSE_LISTS.items():
