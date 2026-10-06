@@ -61,7 +61,7 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 **CO-4 — Data and secrets**
 - Given `ANTHROPIC_API_KEY` unset, a real run exits with a clear configuration error. `--dry-run` works without a key.
 - Given a scan of tracked files, no API keys or credentials are present. A scan found none on 2026-10-06 (patterns `sk-`, `AKIA`, private-key headers, tracked `.env`).
-- Given a run, only the five engagement fields are sent to the API. **Limitation, stated honestly:** `company_name` is sent verbatim. The plan says testing should use synthetic or anonymised names, but nothing enforces or warns about that.
+- Given a run, only the five engagement fields are sent to the API. A real (non-dry-run) call prints a stderr warning that `company_name` is sent verbatim (non-blocking; `--yes` / `--no-warn` suppresses it), and `--anonymise` / `--alias NAME` sends a placeholder instead, with the real name restored only in the locally shown `audit_input` and absent from logs. **Limitation, stated honestly:** anonymisation is opt-in, the default still sends the real name, nothing enforces synthetic names, and the other four fields are still sent.
 
 **CO-5 — Traceability**
 - Given a run at default log level, stderr logs the input profile, mapped jurisdiction and framework keys, model name, API duration, token counts, stop reason, and the resulting `report_id`.
@@ -87,7 +87,7 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 - **Knowledge base is hand-maintained and static.** There is no versioning, no review date per framework, and no process for regulatory change. Boundary cases (e.g. a fintech that may or may not be a credit institution under DORA) are listed as an open question in the plan and are not handled explicitly.
 - **Limited jurisdiction coverage (partly mitigated).** The system prompt names US, EU, UK, Australia and Singapore (now documented in the README). Other countries still resolve to a generic jurisdiction and the output may be thin, but the user is now warned in the CLI, log and report (see CO-3). Coverage itself is not extended, and the warning is not shown for Canada, India or Japan, which have only minimal coverage.
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
-- **Real entity names are sent to a third-party API** with no warning or opt-out.
+- **Real entity names are sent to a third-party API by default.** A warning and an opt-in alias exist (issue #12), but anonymisation is not the default and the alias is not checked for leaking the real name. Real-name restoration in `audit_input` means local output stays sensitive.
 - **No persistent audit trail** (see section 7).
 - **Tests are mostly unit-level.** `tests/test_agent_run.py` exercises `ComplianceAgent.run` with a mocked client (success, JSON extraction, no-JSON, schema-invalid, 4xx/5xx/connection errors), and grounding and disclaimer tests also use mocked responses. Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
@@ -112,7 +112,7 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 | CO-3 #4 (unrecognised-jurisdiction warning) | ☑ | `python -m unittest discover -s tests` run on this branch before merging main (56 tests OK, not re-run after the merge), including `TestJurisdictionWarning.*` (CLI stderr incl. `--dry-run`, agent log, report field, formatter, schema exclusion; agent run uses a stubbed model call, not a live API call) |
 | CO-4 #1 (missing key) | ☐ | Candidate: `TestCliDryRun.test_dry_run_no_api_key_needed` covers dry-run only |
 | CO-4 #2 (secret scan) | ☑ | Manual grep of tracked files, 2026-10-06, no matches |
-| CO-4 #3 | ☐ | Known limitation |
+| CO-4 #3 (warning, opt-in alias) | ☑ | `TestEntityNameDataFlow.*` (7 tests, mocked agent, no API call); full suite `python -m unittest discover -s tests` passed, 55 tests. Opt-in only; default still sends real name |
 | CO-5 #1–#2 | ☐ | By code inspection (`saaf/core/agent.py`); no test, no live run |
 | CO-5 #3 | ☐ | Known limitation |
 

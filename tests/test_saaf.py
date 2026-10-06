@@ -637,7 +637,99 @@ class TestDisclaimerNotOverridable(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Test 8 — Unrecognised jurisdiction warning (issue #10)
+# Test 8 — Entity-name data flow (warning and alias; no API calls)
+# ---------------------------------------------------------------------------
+
+class TestEntityNameDataFlow(unittest.TestCase):
+    """Drives cli.main() in-process with a mocked ComplianceAgent."""
+
+    REAL = "Real Bank NV"
+
+    def _main(self, extra: list[str]):
+        import io
+        import cli
+        sent: list[AuditInput] = []
+
+        def fake_run(audit_input):
+            sent.append(audit_input)
+            report = ComplianceReport.model_construct(
+                report_id="r1", audit_input=audit_input, mandatory_regulations=[],
+                framework_assessments=[], gap_risk_summary=None, disclaimer="d",
+            )
+            return report, MagicMock()
+
+        argv = ["saaf", "--company", self.REAL, "--industry", "Healthcare",
+                "--country", "US", "--listed-status", "Private",
+                "--audit-topic", "Cybersecurity", "--output", "json"] + extra
+        err = io.StringIO()
+        with patch.object(sys, "argv", argv), \
+             patch.object(cli, "Config", return_value=MagicMock()), \
+             patch.object(cli, "ComplianceAgent") as agent_cls, \
+             patch.object(cli, "err_console", cli.Console(file=err, width=200)), \
+             patch.object(cli, "console", cli.Console(file=io.StringIO())), \
+             patch.object(ComplianceReport, "model_dump_json",
+                          lambda self, **kw: self.audit_input.model_dump_json()), \
+             patch("builtins.print") as printed:
+            agent_cls.return_value.run.side_effect = fake_run
+            rc = cli.main()
+        out = "".join(str(c.args[0]) for c in printed.call_args_list)
+        return rc, sent, err.getvalue(), out
+
+    def test_default_warns_and_sends_real_name(self):
+        rc, sent, err, _ = self._main([])
+        self.assertEqual(rc, 0)
+        self.assertIn("sent verbatim", err)
+        self.assertEqual(sent[0].company_name, self.REAL)
+
+    def test_yes_suppresses_warning(self):
+        for flag in ("--yes", "--no-warn"):
+            rc, sent, err, _ = self._main([flag])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("sent verbatim", err)
+
+    def test_dry_run_does_not_warn(self):
+        import io
+        import cli
+        err = io.StringIO()
+        argv = ["saaf", "--company", self.REAL, "--industry", "Healthcare", "--country", "US",
+                "--listed-status", "Private", "--audit-topic", "Cybersecurity", "--dry-run"]
+        with patch.object(sys, "argv", argv), \
+             patch.object(cli, "err_console", cli.Console(file=err)), \
+             patch.object(cli, "console", cli.Console(file=io.StringIO())):
+            self.assertEqual(cli.main(), 0)
+        self.assertNotIn("sent verbatim", err.getvalue())
+
+    def test_anonymise_sends_alias_not_real_name(self):
+        rc, sent, err, _ = self._main(["--anonymise"])
+        self.assertEqual(sent[0].company_name, "Entity A")
+        self.assertNotIn(self.REAL, sent[0].model_dump_json())
+        self.assertNotIn("sent verbatim", err)
+
+    def test_alias_implies_anonymise(self):
+        _, sent, _, _ = self._main(["--alias", "Client X"])
+        self.assertEqual(sent[0].company_name, "Client X")
+
+    def test_anonymised_output_restores_real_name_locally(self):
+        _, _, _, out = self._main(["--anonymise"])
+        self.assertIn(self.REAL, out)
+
+    def test_real_name_not_logged_when_anonymised(self):
+        """The agent logs the input it receives; with an alias that is never the real name."""
+        import cli
+        with patch("saaf.core.agent.anthropic.Anthropic"):
+            agent = ComplianceAgent(MagicMock())
+        sent = cli.apply_alias(_make_input(company_name=self.REAL), "Entity A")
+        with patch.object(agent, "_call_claude", side_effect=RuntimeError("stop")), \
+             self.assertLogs("saaf.agent", level="DEBUG") as cm:
+            with self.assertRaises(RuntimeError):
+                agent.run(sent)
+        logged = "\n".join(cm.output)
+        self.assertNotIn(self.REAL, logged)
+        self.assertIn("Entity A", logged)
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — Unrecognised jurisdiction warning (issue #10)
 # ---------------------------------------------------------------------------
 
 _MINIMAL_REPORT = {
