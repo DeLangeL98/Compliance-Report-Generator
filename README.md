@@ -25,9 +25,17 @@ python cli.py --company "..." --industry "Financial Services" \
 
 # JSON output
 python cli.py ... --output json
+
+# SAAF finding-schema export (critical gaps and framework key gaps as findings;
+# Critical is mapped to High, see saaf/output/findings.py)
+python cli.py ... --output findings
 ```
 
 Requires `ANTHROPIC_API_KEY` set in the environment.
+
+### Audit trail (opt-in)
+
+`--audit-trail-dir DIR` writes `DIR/<report_id>.json` per successful run (inputs, framework keys, model, SHA-256 of the prompts, timestamps, raw model response). Off by default. The company name is redacted unless `--audit-trail-include-company` is given; the raw response is stored verbatim and may still mention it.
 
 ## What it does
 
@@ -52,3 +60,12 @@ See [AUDIT-CRITERIA.md](AUDIT-CRITERIA.md) for control objectives, acceptance cr
 ## Part of SAAF Project
 
 [saaf-portal.vercel.app](https://saaf-portal.vercel.app)
+
+## Tests
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m unittest discover -s tests
+```
+
+CI (`.github/workflows/tests.yml`) runs the same suite on every pull request and push to `main`, and posts a short test report as a PR comment and job summary. The suite makes no API calls.

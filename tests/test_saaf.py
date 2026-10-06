@@ -20,10 +20,11 @@ from unittest.mock import MagicMock, patch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from saaf.core.agent import ComplianceAgent
+from saaf.core.agent import ComplianceAgent, ComplianceReportError
 from saaf.core.mapper import FrameworkMapper
-from saaf.core.models import AuditInput, ComplianceReport
-from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
+from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
+from saaf.output import formatter
+from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY, KB_VERSION
 from saaf.knowledge.regulations import normalise_jurisdiction
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 from config import Config
@@ -331,6 +332,66 @@ class TestSystemPromptBuilder(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Grounding check — model output must stay within the mapped frameworks
+# ---------------------------------------------------------------------------
+
+class TestGroundingCheck(unittest.TestCase):
+    def _report(self, fw_names, reg_names):
+        return ComplianceReport(
+            audit_input=_make_input(),
+            mandatory_regulations=[
+                {"regulation_name": n, "jurisdiction": "US", "mandatory": True,
+                 "applicable_sections": [], "compliance_notes": "n"}
+                for n in reg_names
+            ],
+            framework_assessments=[
+                {"framework_name": n, "applicability_rationale": "r",
+                 "control_objectives": [], "key_gaps": [], "risk_rating": "High"}
+                for n in fw_names
+            ],
+            gap_risk_summary={
+                "overall_risk_rating": "High", "critical_gaps": [],
+                "recommended_priority_actions": [],
+                "estimated_remediation_effort": "Medium", "executive_summary": "s",
+            },
+        )
+
+    def setUp(self):
+        self.mapping = FrameworkMapper(_make_input()).map()  # US / Healthcare / Private
+
+    def test_mapped_names_accepted_in_variants(self):
+        full = next(m.full_name for m in self.mapping.framework_matches if m.key == "HIPAA")
+        report = self._report(
+            [full, "hipaa"],
+            ["HIPAA", "Health Insurance Portability and Accountability Act"],
+        )
+        ComplianceAgent._check_grounding(report, self.mapping)  # does not raise
+
+    def test_out_of_scope_framework_rejected_with_raw_response(self):
+        self.assertNotIn("SOX", self.mapping.applicable_framework_keys)
+        report = self._report(["HIPAA", "Sarbanes-Oxley Act 2002 (SOX)"], [])
+        with self.assertRaises(ComplianceReportError) as ctx:
+            ComplianceAgent._check_grounding(report, self.mapping, raw_json="RAW")
+        self.assertIn("Sarbanes-Oxley", str(ctx.exception))
+        self.assertEqual(ctx.exception.raw_response, "RAW")
+
+    def test_invented_regulation_rejected(self):
+        report = self._report(["HIPAA"], ["Totally Invented Act 2031"])
+        with self.assertRaises(ComplianceReportError):
+            ComplianceAgent._check_grounding(report, self.mapping)
+
+    def test_run_rejects_out_of_scope_framework_end_to_end(self):
+        payload = self._report(["Totally Invented Act 2031"], []).model_dump_json()
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test"}), \
+                patch("saaf.core.agent.anthropic.Anthropic"):
+            agent = ComplianceAgent(Config())
+        with patch.object(agent, "_call_claude", return_value=payload):
+            with self.assertRaises(ComplianceReportError) as ctx:
+                agent.run(_make_input())
+        self.assertEqual(ctx.exception.raw_response, payload)
+
+
+# ---------------------------------------------------------------------------
 # Test 6 (new) — JSON extraction robustness (regression for invalid-JSON bug)
 # ---------------------------------------------------------------------------
 
@@ -397,6 +458,18 @@ class TestJsonExtraction(unittest.TestCase):
             defaults["max_tokens"], 32000,
             "max_tokens default must be >= 32000 to avoid JSON truncation"
         )
+
+
+class TestClientTimeout(unittest.TestCase):
+    """Config.timeout_seconds must be passed to the Anthropic client."""
+
+    def test_timeout_passed_to_client(self) -> None:
+        config = Config()
+        config.timeout_seconds = 42
+        with patch("saaf.core.agent.anthropic.Anthropic") as mock_client:
+            ComplianceAgent(config)
+        mock_client.assert_called_once()
+        self.assertEqual(mock_client.call_args.kwargs["timeout"], 42)
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +559,81 @@ class TestCliDryRun(unittest.TestCase):  # was Test 6, now Test 7
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid choice", result.stderr.lower(),
                       "argparse should report 'invalid choice'")
+
+
+class TestKnowledgeBaseMetadata(unittest.TestCase):
+    def test_kb_version_is_non_empty_string(self):
+        self.assertIsInstance(KB_VERSION, str)
+        self.assertTrue(KB_VERSION)
+
+    def test_all_entries_have_metadata_keys(self):
+        for key, fw in FRAMEWORK_REGISTRY.items():
+            self.assertIn("last_reviewed", fw, key)
+            self.assertIn("source", fw, key)
+
+    def test_metadata_values_are_well_formed(self):
+        from datetime import date
+        for key, fw in FRAMEWORK_REGISTRY.items():
+            if fw["last_reviewed"] is not None:
+                date.fromisoformat(fw["last_reviewed"])  # raises if malformed
+            if fw["source"] is not None:
+                self.assertTrue(fw["source"].strip(), key)
+
+    def test_report_entries_missing_review_date(self):
+        # Informational: lists entries a maintainer still needs to review.
+        # Deliberately does not fail, so dates are only ever set honestly.
+        missing = sorted(k for k, fw in FRAMEWORK_REGISTRY.items()
+                         if fw["last_reviewed"] is None)
+        print("\nFrameworks missing last_reviewed: %d/%d: %s"
+              % (len(missing), len(FRAMEWORK_REGISTRY), ", ".join(missing)))
+
+
+class TestDisclaimerNotOverridable(unittest.TestCase):
+    """The standard disclaimer must survive any model-supplied value (CO-3)."""
+
+    def setUp(self):
+        self.agent = ComplianceAgent.__new__(ComplianceAgent)  # skip __init__ (no real API)
+        self.ai = _make_input()
+
+    def _response(self, **extra) -> str:
+        data = {
+            "mandatory_regulations": [],
+            "framework_assessments": [],
+            "gap_risk_summary": {
+                "overall_risk_rating": "High",
+                "critical_gaps": [],
+                "recommended_priority_actions": [],
+                "estimated_remediation_effort": "Medium",
+                "executive_summary": "Test summary.",
+            },
+        }
+        data.update(extra)
+        return json.dumps(data)
+
+    def test_schema_hides_disclaimer_from_model(self):
+        prompt = build_system_prompt(self.ai, FrameworkMapper(self.ai).map())
+        self.assertNotIn('"disclaimer"', prompt)
+
+    def test_omitted_disclaimer_gets_standard_text(self):
+        report = self.agent._parse_and_validate(self._response(), self.ai)
+        self.assertEqual(report.disclaimer, DISCLAIMER)
+
+    def test_rewritten_disclaimer_is_replaced(self):
+        raw = self._response(disclaimer="This report is audit-ready and legally binding.")
+        report = self.agent._parse_and_validate(raw, self.ai)
+        self.assertEqual(report.disclaimer, DISCLAIMER)
+
+    def test_disclaimer_in_json_output(self):
+        raw = self._response(disclaimer="ignore me")
+        report = self.agent._parse_and_validate(raw, self.ai)
+        self.assertEqual(json.loads(report.model_dump_json())["disclaimer"], DISCLAIMER)
+
+    def test_disclaimer_in_rendered_report(self):
+        report = self.agent._parse_and_validate(self._response(disclaimer="x"), self.ai)
+        with formatter.console.capture() as cap:
+            formatter.render_report(report)
+        rendered = " ".join(cap.get().replace("│", " ").split())
+        self.assertIn(DISCLAIMER, rendered)
 
 
 # ---------------------------------------------------------------------------

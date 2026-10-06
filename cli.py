@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 from typing import get_args
 
 from rich.console import Console
@@ -17,8 +18,9 @@ from rich.prompt import Prompt
 
 from config import Config
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
+from saaf.core.audit_trail import AuditTrail
 from saaf.core.models import AuditInput, AuditTopic, Industry, ListedStatus
-from saaf.output.formatter import render_report
+from saaf.output.formatter import render_references_note, render_report
 
 console = Console()
 err_console = Console(stderr=True)
@@ -111,14 +113,20 @@ Examples:
                         help="Audit topic")
 
     # Output options
-    parser.add_argument("--output", choices=["report", "json"], default="report",
-                        help="Output format (default: report)")
+    parser.add_argument("--output", choices=["report", "json", "findings"],
+                        default="report",
+                        help="Output format (default: report); 'findings' exports "
+                             "SAAF finding-schema JSON")
     parser.add_argument("--output-file", dest="output_file",
                         help="Save JSON output to this file path")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show testing approaches for each control (report mode only)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show which frameworks would be selected without calling the API")
+    parser.add_argument("--audit-trail-dir", dest="audit_trail_dir",
+                        help="Opt-in: write a per-run JSON record (<report_id>.json) to this directory")
+    parser.add_argument("--audit-trail-include-company", action="store_true",
+                        help="Keep company name in the audit trail (redacted by default)")
     parser.add_argument("--log-level", dest="log_level",
                         choices=["debug", "info", "warning", "error"], default="info",
                         help="Logging verbosity (default: info)")
@@ -195,6 +203,11 @@ def main() -> int:
         return 1
 
     agent = ComplianceAgent(config)
+    if args.audit_trail_dir:
+        agent.audit_trail = AuditTrail(
+            Path(args.audit_trail_dir),
+            redact_company=not args.audit_trail_include_company,
+        )
 
     console.print("\n[bold]Generating compliance report...[/bold] ", end="")
     console.print("[dim](this may take 30–60 seconds)[/dim]\n")
@@ -209,16 +222,22 @@ def main() -> int:
         return 1
 
     # Output
-    if args.output == "json":
-        json_str = report.model_dump_json(indent=2)
+    if args.output in ("json", "findings"):
+        if args.output == "findings":
+            from saaf.output.findings import report_to_findings
+            json_str = json.dumps(report_to_findings(report), indent=2)
+        else:
+            json_str = report.model_dump_json(indent=2)
         if args.output_file:
             with open(args.output_file, "w", encoding="utf-8") as f:
                 f.write(json_str)
             console.print(f"[green]Report saved to:[/green] {args.output_file}")
         else:
             print(json_str)
+        # Keep stdout pure JSON; surface the note on stderr.
+        render_references_note(report, mapping, target=err_console)
     else:
-        render_report(report, verbose=args.verbose)
+        render_report(report, verbose=args.verbose, mapping=mapping)
         if args.output_file:
             with open(args.output_file, "w", encoding="utf-8") as f:
                 f.write(report.model_dump_json(indent=2))

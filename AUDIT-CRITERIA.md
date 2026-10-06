@@ -43,7 +43,7 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 - Given an EU, Financial Services profile, the mapping includes GDPR and DORA.
 - Given any profile, every `FrameworkMatch` carries a non-empty rationale.
 - Given any profile, the system prompt lists only the mapped frameworks and instructs the model not to reference others.
-- Given a model response that contains a framework not in the mapped set, the agent flags or rejects it. **Limitation, stated honestly:** this is not implemented today. The restriction is a prompt instruction only, and `framework_assessments` / `mandatory_regulations` are not cross-checked against the mapping (see Coverage gaps).
+- Given a model response that contains a framework not in the mapped set, the agent rejects it with a `ComplianceReportError` that carries the raw response. After parsing, `ComplianceAgent._check_grounding` compares `framework_assessments[].framework_name` and `mandatory_regulations[].regulation_name` against the mapped frameworks (case-insensitive; the full name, key, name before the dash, and abbreviations in the full name are accepted). **Limitation, stated honestly:** names are matched, not clauses, so a wrong `requirement_source` inside a mapped framework is not caught (see Coverage gaps).
 
 **CO-2 — Valid output**
 - Given a response wrapped in markdown fences or surrounded by prose, the agent extracts the JSON object and validates it.
@@ -54,7 +54,7 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 
 **CO-3 — Decision support, not conclusions**
 - Given any successful run, the rendered report and the JSON both contain the disclaimer text.
-- Given a model response that omits or rewrites `disclaimer`, the output still carries the standard disclaimer. **Limitation, stated honestly:** not guaranteed today. `disclaimer` is a model field with a default, so a model-supplied value would override it.
+- Given a model response that omits or rewrites `disclaimer`, the output still carries the standard disclaimer. `disclaimer` is excluded from the model-facing schema and forced to `DISCLAIMER` (`saaf/core/models.py`) after validation in `_parse_and_validate`.
 - Given any run, the report does not state that the entity is compliant or non-compliant. **Limitation, stated honestly:** only enforced by prompt wording ("typical gaps for this profile"), not by a check.
 
 **CO-4 — Data and secrets**
@@ -81,15 +81,14 @@ Findings do not use `outputs/schemas/finding-schema.json` today. The output is a
 
 ## 5. Coverage gaps
 
-- **No post-hoc grounding check.** Model output is not compared with the mapped framework set; the restriction relies on the prompt alone.
+- **Grounding check matches names only.** Frameworks and regulations outside the mapping are rejected, but alias matching is a heuristic over `full_name`/key/abbreviations; a legitimate model rewording not covered by it will be rejected (fails closed).
 - **Clause references are unverified.** `requirement_source` and `applicable_sections` are model-generated and not checked against any source text, so a plausible but wrong article number can pass validation.
-- **Disclaimer can be overridden** by the model, since it is part of the schema it fills.
 - **Knowledge base is hand-maintained and static.** There is no versioning, no review date per framework, and no process for regulatory change. Boundary cases (e.g. a fintech that may or may not be a credit institution under DORA) are listed as an open question in the plan and are not handled explicitly.
 - **Limited jurisdiction coverage.** The system prompt names US, EU, UK, Australia and Singapore. Other countries resolve to a generic jurisdiction and the output may be thin.
 - **Not mapped to `finding-schema.json`.** Output cannot be fed directly into other SAAF components.
 - **Real entity names are sent to a third-party API** with no warning or opt-out.
 - **No persistent audit trail** (see section 7).
-- **Tests are mostly unit-level.** `tests/test_agent_run.py` exercises `ComplianceAgent.run` with a mocked client (success, JSON extraction, no-JSON, schema-invalid, 4xx/5xx/connection errors). Still untested: a model response with an out-of-scope framework or a rewritten disclaimer, and disclaimer presence in rendered/JSON output. Not evaluated against real model output.
+- **Tests are mostly unit-level.** `tests/test_agent_run.py` exercises `ComplianceAgent.run` with a mocked client (success, JSON extraction, no-JSON, schema-invalid, 4xx/5xx/connection errors), and grounding and disclaimer tests also use mocked responses. Not evaluated against real model output.
 - **Unused config.** `Config.timeout_seconds` is defined but not passed to the API client.
 - **Repo ownership.** Plan was submitted on the maintainer's behalf by a colleague; the Check and Act PDCA phases are not started.
 
@@ -101,13 +100,14 @@ Status is **Draft**. The test suite (`tests/test_saaf.py`, 496 lines, unittest) 
 |---|---|---|
 | CO-1 #1–#3 (mapping) | ☐ | Candidate tests: `TestFrameworkMapper.test_us_healthcare_includes_hipaa`, `test_us_private_excludes_sox`, `test_eu_finserv_includes_dora`, `test_framework_matches_have_rationale` — not yet run |
 | CO-1 #4 (prompt lists only mapped frameworks) | ☐ | Candidate: `TestSystemPromptBuilder.test_system_prompt_injects_framework_names` — not yet run |
-| CO-1 #5 (out-of-scope framework rejected) | ☐ | Not implemented |
+| CO-1 #5 (out-of-scope framework rejected) | ☑ | `TestGroundingCheck.*` passed on 2026-10-06 (`python -m unittest discover -s tests`, 52 tests OK); mocked API only, not a live model run |
 | CO-2 #1–#2 (JSON extraction) | ☑ | `tests.test_agent_run`: `TestAgentRunSuccess.test_markdown_fenced_json_is_extracted`, `test_prose_wrapped_json_is_extracted`, `TestAgentRunInvalidOutput.test_no_json_raises_with_raw_response` (mocked client, run 2026-10-06, passing). Also candidate: `TestJsonExtraction.*` |
 | CO-2 #3 (schema violation) | ☑ | `tests.test_agent_run`: `TestAgentRunInvalidOutput.test_schema_invalid_json_raises_with_raw_response` (mocked client, run 2026-10-06, passing) |
 | CO-2 #4 (CLI rejects bad enum) | ☐ | Candidate: `TestCliDryRun.test_invalid_industry_rejected_by_cli` — not yet run |
 | CO-2 #5 (API retry behaviour) | ☑ | `tests.test_agent_run`: `TestAgentRunApiErrors.test_4xx_fails_immediately_without_retry`, `test_5xx_retries_max_retries_then_fails`, `test_connection_error_retries_max_retries_then_fails`, `test_transient_5xx_then_success_returns_report` (mocked client, run 2026-10-06, passing) |
-| CO-3 #1 (disclaimer shown) | ☐ | No test |
-| CO-3 #2–#3 | ☐ | Not implemented |
+| CO-3 #1 (disclaimer shown) | ☑ | `TestDisclaimerNotOverridable.test_disclaimer_in_rendered_report`, `test_disclaimer_in_json_output`; `python -m unittest discover -s tests` passed (53 tests), 2026-10-06 |
+| CO-3 #2 (disclaimer omitted/rewritten) | ☑ | `TestDisclaimerNotOverridable.test_omitted_disclaimer_gets_standard_text`, `test_rewritten_disclaimer_is_replaced`, `test_schema_hides_disclaimer_from_model`; same run |
+| CO-3 #3 (no compliance conclusion) | ☐ | Not implemented (prompt wording only) |
 | CO-4 #1 (missing key) | ☐ | Candidate: `TestCliDryRun.test_dry_run_no_api_key_needed` covers dry-run only |
 | CO-4 #2 (secret scan) | ☑ | Manual grep of tracked files, 2026-10-06, no matches |
 | CO-4 #3 | ☐ | Known limitation |

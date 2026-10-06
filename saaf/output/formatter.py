@@ -11,7 +11,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from typing import Optional
+
+from saaf.core.mapper import MappingResult
 from saaf.core.models import ComplianceReport, ControlObjective
+from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
 
 console = Console()
 
@@ -32,7 +36,28 @@ def _risk_badge(rating: str) -> Text:
     return Text(f"[{rating}]", style=colour)
 
 
-def render_report(report: ComplianceReport, *, verbose: bool = False) -> None:
+def render_references_note(
+    report: ComplianceReport, mapping: Optional[MappingResult] = None, *, target: Optional[Console] = None
+) -> None:
+    """Print the unverified-references note and any suspect references."""
+    out = target or console
+    out.print(Panel(UNVERIFIED_NOTE, title="References", border_style="yellow", padding=(0, 2)))
+    if mapping is None:
+        return
+    suspects = find_suspect_references(report, mapping)
+    if suspects:
+        out.print("  [bold yellow]Suspect references (name no mapped framework):[/bold yellow]")
+        for s in suspects:
+            out.print(f"    - {s.location} / {s.field}: {s.reference}", markup=False)
+    out.print()
+
+
+def render_report(
+    report: ComplianceReport,
+    *,
+    verbose: bool = False,
+    mapping: Optional[MappingResult] = None,
+) -> None:
     """Render the full compliance report to the terminal."""
     ai = report.audit_input
 
@@ -156,6 +181,9 @@ def render_report(report: ComplianceReport, *, verbose: bool = False) -> None:
         f"[{effort_colour}]{summary.estimated_remediation_effort}[/{effort_colour}]"
     )
     console.print()
+
+    # ── Reference note ────────────────────────────────────────────────────
+    render_references_note(report, mapping)
 
     # ── Disclaimer ────────────────────────────────────────────────────────
     console.print(Panel(

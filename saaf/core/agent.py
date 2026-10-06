@@ -8,13 +8,17 @@ import json
 import logging
 import re
 import time
+from typing import Optional
 
 import anthropic
 from pydantic import ValidationError
 
 from config import Config
-from saaf.core.mapper import FrameworkMapper, MappingResult
-from saaf.core.models import AuditInput, ComplianceReport
+from saaf.core.audit_trail import AuditTrail, utc_now
+from saaf.core.mapper import FrameworkMapper, FrameworkMatch, MappingResult
+from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
+from saaf.core.reference_check import UNVERIFIED_NOTE, find_suspect_references
+from saaf.knowledge.frameworks import KB_VERSION
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 
 log = logging.getLogger("saaf.agent")
@@ -28,10 +32,38 @@ class ComplianceReportError(Exception):
         self.raw_response = raw_response
 
 
+def _normalise_name(name: str) -> str:
+    """Case-insensitive, punctuation- and whitespace-insensitive comparison form."""
+    return re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
+
+
+def _name_aliases(match: FrameworkMatch) -> set[str]:
+    """Names a mapped framework may legitimately appear under in the model output."""
+    full = match.full_name
+    raw = {full, match.key, match.key.replace("_", " ")}
+    head = re.split(r"\s+[—–-]\s+", full)[0]
+    raw.add(head)
+    raw.add(re.sub(r"\s*\([^)]*\)", "", head))  # head without parentheticals
+    for inner in re.findall(r"\(([^)]*)\)", full):  # abbreviations, e.g. (SOX)
+        for token in inner.split("/"):
+            token = token.strip()
+            if " " not in token and sum(c.isupper() for c in token) >= 2 and len(token) >= 3:
+                raw.add(token)
+    for part in head.split(" / "):
+        raw.add(re.sub(r"\s*\([^)]*\)", "", part))
+    return {n for n in (_normalise_name(r) for r in raw) if n}
+
+
 class ComplianceAgent:
+    # Optional opt-in audit trail (see saaf/core/audit_trail.py); off by default.
+    audit_trail: Optional[AuditTrail] = None
+
     def __init__(self, config: Config | None = None) -> None:
         self.config = config or Config()
-        self.client = anthropic.Anthropic(api_key=self.config.api_key)
+        self.client = anthropic.Anthropic(
+            api_key=self.config.api_key,
+            timeout=self.config.timeout_seconds,
+        )
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -48,6 +80,8 @@ class ComplianceAgent:
                  audit_input.company_name, audit_input.industry,
                  audit_input.country, audit_input.listed_status, audit_input.audit_topic)
 
+        log.info("Knowledge base version: %s", KB_VERSION)
+
         # Step 1: Deterministic framework mapping (no API call)
         mapping = FrameworkMapper(audit_input).map()
         log.info("Mapper: jurisdiction=%s  frameworks=%d  [%s]",
@@ -62,15 +96,38 @@ class ComplianceAgent:
                   len(system_prompt), len(user_message))
 
         # Step 3: Call Claude with streaming + adaptive thinking
+        started_at = utc_now()
         raw_json = self._call_claude(system_prompt, user_message)
 
         # Step 4: Parse and validate
         report = self._parse_and_validate(raw_json, audit_input)
+
+        # Step 5: Reject anything the deterministic mapping did not select
+        self._check_grounding(report, mapping, raw_json)
+
+        if self.audit_trail is not None:
+            self.audit_trail.record(
+                report_id=report.report_id,
+                inputs=audit_input.model_dump(),
+                framework_keys=[m.key for m in mapping.framework_matches],
+                model=self.config.model,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                started_at=started_at,
+                finished_at=utc_now(),
+                raw_response=raw_json,
+            )
         log.info("Report ready: id=%s  risk=%s  frameworks=%d  regulations=%d",
                  report.report_id,
                  report.gap_risk_summary.overall_risk_rating,
                  len(report.framework_assessments),
                  len(report.mandatory_regulations))
+
+        # Step 5: Heuristic reference check (does not verify clause text)
+        log.warning(UNVERIFIED_NOTE)
+        for s in find_suspect_references(report, mapping):
+            log.warning("Suspect reference [%s %s]: %r (%s)",
+                        s.location, s.field, s.reference, s.reason)
 
         return report, mapping
 
@@ -173,6 +230,9 @@ class ComplianceAgent:
             log.debug("audit_input missing from response — injecting from input")
             data["audit_input"] = audit_input.model_dump()
 
+        if "disclaimer" in data:
+            log.warning("Model supplied a disclaimer — ignoring and using the standard text")
+
         try:
             report = ComplianceReport(**data)
         except ValidationError as e:
@@ -182,7 +242,36 @@ class ComplianceAgent:
                 raw_response=raw_json,
             ) from e
 
+        # Not model-controlled: always force the standard disclaimer.
+        report.disclaimer = DISCLAIMER
         return report
+
+    @staticmethod
+    def _check_grounding(
+        report: ComplianceReport, mapping: MappingResult, raw_json: str = ""
+    ) -> None:
+        """
+        Reject any framework or regulation that is not in the deterministic mapping.
+
+        Mandatory regulations are drawn from the same registry as frameworks
+        (mapper regulation keys are framework keys), so both lists are checked
+        against the mapped frameworks.
+        """
+        allowed = [_name_aliases(m) for m in mapping.framework_matches]
+        names = [a.framework_name for a in report.framework_assessments]
+        names += [r.regulation_name for r in report.mandatory_regulations]
+        ungrounded = [
+            n for n in names
+            if not any(_normalise_name(n) in aliases for aliases in allowed)
+        ]
+
+        if ungrounded:
+            log.error("Grounding check failed: not in mapping: %s", ungrounded)
+            raise ComplianceReportError(
+                "Report references frameworks/regulations outside the mapped set: "
+                + ", ".join(repr(n) for n in ungrounded),
+                raw_response=raw_json,
+            )
 
     @staticmethod
     def _extract_json_object(text: str) -> str:
