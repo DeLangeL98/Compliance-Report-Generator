@@ -85,6 +85,8 @@ def _build_framework_section(mapping: MappingResult) -> str:
 
 def _build_schema_section() -> str:
     schema = ComplianceReport.model_json_schema()
+    # The disclaimer is fixed by the agent, so the model is not shown the field.
+    schema["properties"].pop("disclaimer", None)
     schema_str = json.dumps(schema, indent=2)
     return (
         "=" * 60 + "\n"

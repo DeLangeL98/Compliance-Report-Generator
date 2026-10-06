@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from config import Config
 from saaf.core.mapper import FrameworkMapper, MappingResult
-from saaf.core.models import AuditInput, ComplianceReport
+from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
 
 log = logging.getLogger("saaf.agent")
@@ -173,6 +173,9 @@ class ComplianceAgent:
             log.debug("audit_input missing from response — injecting from input")
             data["audit_input"] = audit_input.model_dump()
 
+        if "disclaimer" in data:
+            log.warning("Model supplied a disclaimer — ignoring and using the standard text")
+
         try:
             report = ComplianceReport(**data)
         except ValidationError as e:
@@ -182,6 +185,8 @@ class ComplianceAgent:
                 raw_response=raw_json,
             ) from e
 
+        # Not model-controlled: always force the standard disclaimer.
+        report.disclaimer = DISCLAIMER
         return report
 
     @staticmethod

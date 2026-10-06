@@ -22,7 +22,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from saaf.core.agent import ComplianceAgent
 from saaf.core.mapper import FrameworkMapper
-from saaf.core.models import AuditInput, ComplianceReport
+from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
+from saaf.output import formatter
 from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY
 from saaf.knowledge.regulations import normalise_jurisdiction
 from saaf.prompts.system_prompt import build_system_prompt, build_user_message
@@ -486,6 +487,54 @@ class TestCliDryRun(unittest.TestCase):  # was Test 6, now Test 7
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid choice", result.stderr.lower(),
                       "argparse should report 'invalid choice'")
+
+
+class TestDisclaimerNotOverridable(unittest.TestCase):
+    """The standard disclaimer must survive any model-supplied value (CO-3)."""
+
+    def setUp(self):
+        self.agent = ComplianceAgent.__new__(ComplianceAgent)  # skip __init__ (no real API)
+        self.ai = _make_input()
+
+    def _response(self, **extra) -> str:
+        data = {
+            "mandatory_regulations": [],
+            "framework_assessments": [],
+            "gap_risk_summary": {
+                "overall_risk_rating": "High",
+                "critical_gaps": [],
+                "recommended_priority_actions": [],
+                "estimated_remediation_effort": "Medium",
+                "executive_summary": "Test summary.",
+            },
+        }
+        data.update(extra)
+        return json.dumps(data)
+
+    def test_schema_hides_disclaimer_from_model(self):
+        prompt = build_system_prompt(self.ai, FrameworkMapper(self.ai).map())
+        self.assertNotIn('"disclaimer"', prompt)
+
+    def test_omitted_disclaimer_gets_standard_text(self):
+        report = self.agent._parse_and_validate(self._response(), self.ai)
+        self.assertEqual(report.disclaimer, DISCLAIMER)
+
+    def test_rewritten_disclaimer_is_replaced(self):
+        raw = self._response(disclaimer="This report is audit-ready and legally binding.")
+        report = self.agent._parse_and_validate(raw, self.ai)
+        self.assertEqual(report.disclaimer, DISCLAIMER)
+
+    def test_disclaimer_in_json_output(self):
+        raw = self._response(disclaimer="ignore me")
+        report = self.agent._parse_and_validate(raw, self.ai)
+        self.assertEqual(json.loads(report.model_dump_json())["disclaimer"], DISCLAIMER)
+
+    def test_disclaimer_in_rendered_report(self):
+        report = self.agent._parse_and_validate(self._response(disclaimer="x"), self.ai)
+        with formatter.console.capture() as cap:
+            formatter.render_report(report)
+        rendered = " ".join(cap.get().replace("│", " ").split())
+        self.assertIn(DISCLAIMER, rendered)
 
 
 # ---------------------------------------------------------------------------
