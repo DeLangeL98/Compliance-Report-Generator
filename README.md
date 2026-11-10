@@ -2,6 +2,11 @@
 
 Identifies all applicable regulatory frameworks for a financial entity and produces a structured compliance overview to kick off an audit engagement.
 
+## Prerequisites
+
+- Python 3.9 or newer (the package does not import on 3.8). CI runs the tests on Python 3.12 only (`.github/workflows/tests.yml`).
+- An API key for the provider you use, from environment variables only: `ANTHROPIC_API_KEY` (default provider), `OPENAI_API_KEY`, or `SAAF_API_KEY` (see *Choosing a model or endpoint*). `--dry-run` needs no key, and neither does the `openai` provider with a custom endpoint (e.g. a local model). `.env` is git-ignored.
+
 ## How to run
 
 ```bash
@@ -12,7 +17,7 @@ python cli.py
 
 # Non-interactive mode
 python cli.py \
-  --company "Dutch National Bank" \
+  --company "Example Bank N.V." \
   --industry "Financial Services" \
   --country Netherlands \
   --listed-status Public \
@@ -128,13 +133,35 @@ Not covered yet (references are labelled `framework_not_covered`, not checked): 
 
 Updating the lists: an agent may refresh the data from the official sources, but only through a pull request that cites them. Run the scripts in `tools/clause_sources/` (stdlib only; see `common.py` for the data format), then `python3 -I tools/clause_sources/provenance_table.py` and put its table (`source`, `last_reviewed`) in the PR for a maintainer to check. `last_reviewed` in the data files is the retrieval date, not a maintainer's sign-off.
 
+## Limitations & human-review gate
+
+The report is **decision support for audit planning**, not an audit conclusion. An auditor must review it before using it in an engagement. Every terminal and JSON report carries a disclaimer that the model cannot omit or rewrite (`DISCLAIMER` in `saaf/core/models.py`). The `--output findings` export does not include it.
+
+- It maps frameworks to a profile. It does not assess the entity's actual compliance.
+- Clause references are written by the model and only checked for existence, never for meaning (see *Clause references*).
+- The knowledge base is hand-maintained; coverage outside the listed jurisdictions is thin (see *Supported jurisdictions*).
+- No test or logged run uses a real model. Model calls in the tests are mocked or served by a local server, so output quality is not evaluated for any provider.
+- Real entity names are sent to the model endpoint, a third-party API by default. A warning and an opt-in alias exist, but anonymisation is not the default.
+- The full list of known gaps is in `AUDIT-CRITERIA.md` section 5.
+
+## Guardrails
+
+The agent (`cli.py`, `config.py`, `saaf/`) runs no shell commands. No command prohibited by SAAF's `regulatory/guardrails/allowed-commands.md` (`rm`, `sudo`, `curl`, `wget`, `ssh`, `scp`, `chmod`, `chown`, `cron`, runtime `pip install`) appears there. Its only outbound call is to the configured model endpoint. The maintenance scripts in `tools/clause_sources/` are not part of this agent at runtime. A maintainer or a coding agent runs them to prepare a clause-list update (see *Clause references*), and the `Clause sources e2e` workflow runs them weekly and on relevant PRs.
+
+**Known limitation:** those scripts fetch official clause lists directly over HTTPS (`urllib`), not through an approved API connector. They do not yet meet the rule in `allowed-commands.md` that scripts make no outbound connections except through one. Tracked in #49.
+
 ## Audit criteria
 
 See [AUDIT-CRITERIA.md](AUDIT-CRITERIA.md) for control objectives, acceptance criteria, known gaps and observability.
 
 ## Related plan
 
-[Compliance Report Generator — Rohan Sobha](https://github.com/Iodine98/SAAF-Project/blob/main/plans/hackathon-2/rohan-sobha-compliance-report-generator.md)
+[Compliance Report Generator — Rohan Sobha](https://github.com/SAAF-Project/SAAF-Project/blob/main/plans/hackathon-2/rohan-sobha-compliance-report-generator.md) (in SAAF-Project; previously linked from a fork: [Iodine98/SAAF-Project](https://github.com/Iodine98/SAAF-Project/blob/main/plans/hackathon-2/rohan-sobha-compliance-report-generator.md))
+
+## Maintainer and licence
+
+- **Maintainer:** Rohan Sobha (see `AUDIT-CRITERIA.md`). Contact through: rohan@vital-dev.com
+- **Licence:** TODO(owner): licence to be decided by Stichting SAAF.
 
 ## Part of SAAF Project
 
