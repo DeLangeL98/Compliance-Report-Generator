@@ -114,6 +114,43 @@ class TestAgentRunSuccess(_AgentTestCase):
 
 
 # ---------------------------------------------------------------------------
+# audit_input is agent-owned (issue #43)
+# ---------------------------------------------------------------------------
+
+class TestAuditInputAgentOwned(_AgentTestCase):
+
+    def test_different_audit_input_is_replaced_and_warned(self):
+        forged = {
+            "company_name": "Evil Corp",
+            "industry": "Technology",
+            "country": "Germany",
+            "listed_status": "Public",
+            "audit_topic": "Data Privacy",
+        }
+        self._respond_with(json.dumps({**_report_dict(), "audit_input": forged}))
+        with self.assertLogs("saaf.agent", level="WARNING") as cm:
+            report, _ = self.agent.run(_make_input())
+        self.assertEqual(report.audit_input, _make_input())
+        self.assertTrue(any("audit_input" in m for m in cm.output))
+        self.assertFalse(any("Evil Corp" in m for m in cm.output))
+
+    def test_invalid_audit_input_does_not_fail_validation(self):
+        for invalid in ({"industry": "Aliens"}, "not an object", ["x"]):
+            with self.subTest(invalid=invalid):
+                self._respond_with(json.dumps({**_report_dict(), "audit_input": invalid}))
+                report, _ = self.agent.run(_make_input())
+                self.assertEqual(report.audit_input, _make_input())
+
+    def test_exact_echo_is_not_warned_about(self):
+        echo = _make_input().model_dump()
+        self._respond_with(json.dumps({**_report_dict(), "audit_input": echo}))
+        with self.assertLogs("saaf.agent", level="INFO") as cm:
+            report, _ = self.agent.run(_make_input())
+        self.assertEqual(report.audit_input, _make_input())
+        self.assertFalse(any("audit_input" in m for m in cm.output))
+
+
+# ---------------------------------------------------------------------------
 # Audit trail records which provider / endpoint produced a report
 # ---------------------------------------------------------------------------
 

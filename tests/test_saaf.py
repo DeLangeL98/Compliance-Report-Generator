@@ -22,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import Config
 from saaf.core.agent import ComplianceAgent, ComplianceReportError
+from saaf.core.llm import LLMResponse
 from saaf.core.mapper import FrameworkMapper
 from saaf.core.models import DISCLAIMER, AuditInput, ComplianceReport
 from saaf.knowledge.frameworks import FRAMEWORK_REGISTRY, KB_VERSION
@@ -714,6 +715,33 @@ class TestEntityNameDataFlow(unittest.TestCase):
     def test_anonymised_output_restores_real_name_locally(self):
         _, _, _, out = self._main(["--anonymise"])
         self.assertIn(self.REAL, out)
+
+    def test_anonymised_run_ignores_model_audit_input_and_restores_real_name(self):
+        """Real agent, mocked client: only the alias is sent; the real name is restored."""
+        import io
+
+        import cli
+        forged = _make_input(company_name="Model Corp").model_dump()
+        text = json.dumps({**_MINIMAL_REPORT, "audit_input": forged})
+        argv = ["saaf", "--company", self.REAL, "--industry", "Healthcare",
+                "--country", "US", "--listed-status", "Private",
+                "--audit-topic", "Cybersecurity", "--output", "json", "--anonymise"]
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}), \
+             patch("saaf.core.agent.create_client") as factory, \
+             patch.object(sys, "argv", argv), \
+             patch.object(cli, "err_console", cli.Console(file=io.StringIO())), \
+             patch.object(cli, "console", cli.Console(file=io.StringIO())), \
+             patch("builtins.print") as printed:
+            client = factory.return_value
+            client.complete.return_value = LLMResponse(
+                text=text, input_tokens=1, output_tokens=1, stop_reason="end_turn")
+            self.assertEqual(cli.main(), 0)
+
+        sent_to_model = str(client.complete.call_args_list)
+        self.assertNotIn(self.REAL, sent_to_model)
+        self.assertIn("Entity A", sent_to_model)
+        output = json.loads("".join(str(c.args[0]) for c in printed.call_args_list))
+        self.assertEqual(output["audit_input"]["company_name"], self.REAL)
 
     def test_real_name_not_logged_when_anonymised(self):
         """The agent logs the input it receives; with an alias that is never the real name."""

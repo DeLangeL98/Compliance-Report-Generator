@@ -70,7 +70,7 @@ These describe the agent's own trustworthy behaviour, not the regulations it rep
 
 **CO-5 — Traceability**
 - Given a run at default log level, stderr logs the input profile, mapped jurisdiction and framework keys, provider, model name and endpoint host, API duration, token counts, stop reason, and the resulting `report_id`.
-- Given a JSON output, it includes `report_id`, `generated_at` and the `audit_input`.
+- Given a JSON output, it includes `report_id`, `generated_at` and the `audit_input`. `audit_input` is agent-owned: `_parse_and_validate` always overwrites it with the trusted input before validation, so a model-supplied value never reaches the report, even if it is invalid. Whenever the model supplies a value that differs from the trusted input, a warning is logged.
 - Given `--audit-trail-dir DIR`, each successful run writes `DIR/<report_id>.json` containing the inputs (company name redacted unless `--audit-trail-include-company`), framework keys, provider, model, endpoint host and sanitised URL, call settings (max tokens, retries, timeout), knowledge-base version, attempts, token usage, stop reason, prompt SHA-256, timestamps and the raw response.
 - Given an endpoint URL containing credentials, a query string or a fragment, the audit record contains none of them.
 - **Limitation, stated honestly:** the audit trail is opt-in and off by default. Without it, logs go to stderr only and nothing is persisted. The prompt itself is stored only as a hash, the raw response is stored verbatim (and may echo the company name), and runs that fail parsing or validation get no record because no `report_id` exists yet. The recorded endpoint is what the client was configured to call; it does not prove which backend served the request (gateways may route to other models).
@@ -131,6 +131,7 @@ Status is **Draft**. A row is marked ☑ when the tests it names passed in the `
 | CO-4 · Company-name warning, opt-in alias, alias absent from logs | ☑ | `TestEntityNameDataFlow.*`. Opt-in only; the default still sends the real name |
 | CO-5 · Stderr log carries the profile, frameworks, provider, host, model, usage and `report_id` | ☐ | By code inspection (`saaf/core/agent.py`); no test asserts the log lines |
 | CO-5 · JSON output includes `report_id`, `generated_at` and `audit_input` | ☐ | By code inspection (`saaf/core/models.py`); no test names these fields in the CLI output |
+| CO-5 · A model-supplied `audit_input` is replaced by the trusted input; with `--anonymise` the model sees only the alias and the local report shows the real name | ☑ | `TestAuditInputAgentOwned.*`, `TestEntityNameDataFlow.test_anonymised_run_ignores_model_audit_input_and_restores_real_name` |
 | CO-5 · `--audit-trail-dir` writes a full record; company name redacted by default | ☑ | `TestAuditTrail.*`, `TestProviderMetadata.*`, `TestAgentAuditTrailMetadata.*` |
 | CO-5 · Endpoint credentials, query string and fragment never reach the record | ☑ | `TestProviderMetadata.test_credentials_and_query_never_reach_the_file`, `TestSanitizeEndpoint.*` |
 

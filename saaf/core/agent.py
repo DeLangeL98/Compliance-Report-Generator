@@ -222,9 +222,12 @@ class ComplianceAgent:
 
         log.debug("JSON parsed OK  keys=%s", list(data.keys()))
 
-        if "audit_input" not in data or not data["audit_input"]:
-            log.debug("audit_input missing from response — injecting from input")
-            data["audit_input"] = audit_input.model_dump()
+        # Agent-owned: the report must describe the engagement actually requested
+        trusted_input = audit_input.model_dump()
+        supplied_input = data.get("audit_input")
+        if supplied_input is not None and supplied_input != trusted_input:
+            log.warning("Model supplied a different audit_input — ignoring and using the input")
+        data["audit_input"] = trusted_input
 
         if "disclaimer" in data:
             log.warning("Model supplied a disclaimer — ignoring and using the standard text")
