@@ -6,8 +6,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import tomllib
-
 from sentinel import __version__
 from sentinel.contract import run_contract
 from sentinel.report import (
@@ -28,6 +26,8 @@ def _load_config(root: Path, path: str | None) -> dict:
         if path:
             raise SystemExit(f"sentinel: config not found: {cfg_path}")
         return {}
+    import tomllib  # stdlib; imported here so import sorting is stable across Ruff versions
+
     with open(cfg_path, "rb") as f:
         return tomllib.load(f)
 
