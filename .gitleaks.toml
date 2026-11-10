@@ -1,0 +1,23 @@
+title = "Compliance Report Generator secret scanning"
+
+[extend]
+# Built-in rules already cover Anthropic, OpenAI, Hugging Face, Cohere, GitHub, AWS, etc.
+useDefault = true
+
+# Extra catch-all rules for AI provider keys that may not match the built-ins.
+[[rules]]
+id = "ai-provider-api-key"
+description = "AI provider API key (Anthropic, OpenAI, Google, Mistral, Groq, xAI, Replicate, Perplexity, OpenRouter)"
+regex = '''\b(?:sk-ant-[A-Za-z0-9_\-]{20,}|sk-(?:proj-|svcacct-|or-v1-)?[A-Za-z0-9_\-]{32,}|AIza[0-9A-Za-z_\-]{35}|gsk_[A-Za-z0-9]{40,}|xai-[A-Za-z0-9]{40,}|r8_[A-Za-z0-9]{36,}|pplx-[A-Za-z0-9]{40,})\b'''
+keywords = ["sk-", "aiza", "gsk_", "xai-", "r8_", "pplx-"]
+
+[[rules]]
+id = "ai-key-assignment"
+description = "Hardcoded value assigned to an AI API key / token variable"
+regex = '''(?i)\b[A-Z0-9_]*(?:ANTHROPIC|OPENAI|GEMINI|MISTRAL|COHERE|GROQ|HUGGINGFACE|HF|REPLICATE|OPENROUTER|AZURE_OPENAI|CLAUDE_CODE_OAUTH)[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b["']?\s*[:=]\s*["']?([A-Za-z0-9_\-\.]{24,})["']?'''
+keywords = ["api_key", "token", "secret"]
+secretGroup = 1
+
+[allowlist]
+description = "Obvious placeholders"
+regexes = ['''(?i)(?:your|example|placeholder|changeme|dummy|xxxx|\.\.\.)''']
