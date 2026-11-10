@@ -4,7 +4,7 @@ Identifies all applicable regulatory frameworks for a financial entity and produ
 
 ## Prerequisites
 
-- Python 3.12 or newer. CI runs the tests on Python 3.12 only (`.github/workflows/tests.yml`).
+- Python 3.12 or newer. CI runs the tests on Python 3.12 only (`.github/workflows/tests.yml`). 
 - An API key for the provider you use, from environment variables only: `ANTHROPIC_API_KEY` (default provider), `OPENAI_API_KEY`, or `SAAF_API_KEY` (see *Choosing a model or endpoint*). `--dry-run` needs no key, and neither does the `openai` provider with a custom endpoint (e.g. a local model). `.env` is git-ignored.
 
 ## How to run
