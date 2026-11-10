@@ -1,0 +1,12 @@
+# SAAF Sentinel configuration (see sentinel/ and FINDINGS in the Sentinel kit).
+[sentinel]
+# "never": report only, never block a pull request. Switch to "error" once the
+# findings from the review are fixed.
+fail-on = "never"
+
+[static]
+# tools/clause_sources are offline maintenance scripts; sentinel/ is the checker itself
+exclude = ["tools", "sentinel"]
+
+[contract]
+adapter = "sentinel_adapter.py"
