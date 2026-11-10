@@ -198,6 +198,10 @@ def render_report(
     )
     console.print()
 
+    # One-line board summary in the report footer
+    console.print(f"  [bold]Board summary:[/bold] {summary.executive_summary}")
+    console.print()
+
     # ── Reference note ────────────────────────────────────────────────────
     render_references_note(report, mapping)
 

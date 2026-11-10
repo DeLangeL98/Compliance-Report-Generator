@@ -1,0 +1,11 @@
+# SAAF Sentinel configuration. Findings: docs/sentinel-findings.md
+[sentinel]
+# Demo branch: the gate is ON. "error" blocks merging while serious findings remain.
+fail-on = "error"
+
+[static]
+# tools/clause_sources are offline maintenance scripts; sentinel/ is the checker itself
+exclude = ["tools", "sentinel"]
+
+[contract]
+adapter = "sentinel_adapter.py"

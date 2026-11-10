@@ -1,0 +1,42 @@
+name: Sentinel
+
+# SAAF Sentinel: hardening checks (model-controlled fields, render injection,
+# dropped mandatory frameworks, retries, truncation). Report-only for now:
+# change fail-on in sentinel.toml to "error" to make it block merges.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: sentinel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run SAAF Sentinel
+        run: >
+          python -m sentinel all --root .
+          --format github
+          --summary-out "$GITHUB_STEP_SUMMARY"
+        env:
+          # Sentinel never calls a model; the key is a dummy.
+          ANTHROPIC_API_KEY: sentinel-dummy-key
