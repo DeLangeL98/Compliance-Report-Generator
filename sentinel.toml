@@ -1,7 +1,7 @@
-# SAAF Sentinel configuration (see sentinel/ and FINDINGS in the Sentinel kit).
+# SAAF Sentinel configuration. Findings: docs/sentinel-findings.md
 [sentinel]
 # "never": report only, never block a pull request. Switch to "error" once the
-# findings from the review are fixed.
+# findings are fixed.
 fail-on = "never"
 
 [static]

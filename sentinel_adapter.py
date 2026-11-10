@@ -1,6 +1,6 @@
-"""SAAF Sentinel adapter for SAAF-Project/Compliance-Report-Generator.
+"""SAAF Sentinel adapter for Compliance-Report-Generator.
 
-Copy this file and sentinel.toml to the repository root. It drives the real
+Tells Sentinel (sentinel/, configured in sentinel.toml) how to drive the real
 pipeline end to end: ComplianceAgent.run() with a stub LLM client that returns
 the crafted response, the real Rich formatter, and the real FrameworkMapper
 over every input combination. No API call is ever made.
