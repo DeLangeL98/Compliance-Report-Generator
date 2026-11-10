@@ -7,6 +7,7 @@ Run with:
 
 from __future__ import annotations
 
+import importlib
 import sys
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import saaf
 from config import Config
 from tests import endpoints as E
 
@@ -92,6 +94,19 @@ class TestConfigPrecedence(unittest.TestCase):
     def test_invalid_base_url_raises_environment_error(self):
         with _env(ANTHROPIC_API_KEY="k"), self.assertRaises(EnvironmentError):
             Config(base_url="not-a-url")
+
+
+class TestPythonFloor(unittest.TestCase):
+
+    def test_older_python_is_refused(self):
+        with patch("sys.version_info", (3, 11, 9)):
+            with self.assertRaises(SystemExit) as ctx:
+                importlib.reload(saaf)
+        self.assertIn("requires Python 3.12", str(ctx.exception))
+
+    def test_minimum_python_is_accepted(self):
+        with patch("sys.version_info", (3, 12, 0)):
+            importlib.reload(saaf)
 
 
 if __name__ == "__main__":

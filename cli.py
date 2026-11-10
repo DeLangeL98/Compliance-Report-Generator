@@ -184,6 +184,7 @@ def _configure_logging(level: str) -> None:
     )
     # Suppress noisy third-party loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)  # anthropic 1.0+ uses httpx2
     logging.getLogger("anthropic").setLevel(logging.WARNING)
 
 
